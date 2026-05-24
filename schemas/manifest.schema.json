@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rain.art/schemas/v0.1.0/manifest.schema.json",
+  "title": "RAIN Evidence Bundle Manifest",
+  "description": "Décrit le contenu et les métadonnées d'un Evidence Bundle RAIN. Ce fichier est le point d'entrée normatif du bundle ; toute incohérence détectée entre ce manifest et le contenu du ZIP entraîne un exit code non-zéro du vérificateur.",
+  "type": "object",
+  "required": [
+    "rain_version",
+    "bundle_id",
+    "created_at",
+    "proof_level",
+    "files"
+  ],
+  "if": {
+    "properties": {
+      "proof_level": { "enum": ["P2", "P3"] }
+    }
+  },
+  "then": {
+    "required": ["signer_cert_fingerprint"]
+  },
+  "properties": {
+    "rain_version": {
+      "type": "string",
+      "description": "Version du protocole RAIN utilisée pour produire ce bundle. Format SemVer recommandé (ex. '0.1.0').",
+      "examples": ["0.1.0"]
+    },
+    "bundle_id": {
+      "type": "string",
+      "description": "Identifiant unique du bundle au format UUID v4. Généré à la création ; invariant pour la durée de vie du bundle.",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "created_at": {
+      "type": "string",
+      "description": "Horodatage de création du bundle en ISO 8601 avec fuseau horaire explicite (ex. '2026-05-24T14:30:00Z'). Doit être cohérent avec le timestamp RFC 3161 si présent.",
+      "format": "date-time"
+    },
+    "proof_level": {
+      "type": "string",
+      "description": "Niveau de preuve déclaré du bundle. P1 = déclaratif (confiance minimale, aucune preuve cryptographique de session). P2 = signé (SDK RAIN capture et signe chaque étape en temps réel). P3 = souverain (BYOK/HYOK, RAIN ne voit que le hash signé, attestation produite côté client). Le niveau effectif peut être inférieur au niveau déclaré (DOWNGRADE, exit code 2).",
+      "enum": ["P1", "P2", "P3"]
+    },
+    "files": {
+      "type": "array",
+      "description": "Liste exhaustive des fichiers inclus dans le bundle, avec leurs empreintes cryptographiques et leur rôle sémantique. L'ordre n'est pas normatif.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "sha256", "sha3_256", "role"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Nom du fichier tel qu'il apparaît dans le ZIP (chemin relatif à la racine du bundle, ex. 'intent.json')."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Empreinte SHA-256 du fichier encodée en hexadécimal minuscule (64 caractères).",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "sha3_256": {
+            "type": "string",
+            "description": "Empreinte SHA3-256 du fichier encodée en hexadécimal minuscule (64 caractères). Double-hash requis par le protocole RAIN pour résistance aux collisions croisées.",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "role": {
+            "type": "string",
+            "description": "Rôle sémantique du fichier dans le bundle. Valeurs normatives : 'manifest', 'intent', 'mals-log', 'policy', 'artwork', 'c2pa', 'timestamp', 'signature', 'certificate', 'verifier', 'other'.",
+            "enum": [
+              "manifest",
+              "intent",
+              "mals-log",
+              "policy",
+              "artwork",
+              "c2pa",
+              "timestamp",
+              "signature",
+              "certificate",
+              "verifier",
+              "other"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "signer_cert_fingerprint": {
+      "type": "string",
+      "description": "Empreinte hexadécimale du certificat signataire (SHA-256 du DER encodé, 64 caractères). Requis pour P2 (preuve cryptographique signée par le SDK RAIN) et P3 (attestation souveraine BYOK/HYOK). Optionnel pour P1.",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "additionalProperties": false,
+  "$comment": "draft-07 fallback: remplacer '$schema' par 'http://json-schema.org/draft-07/schema#'. La contrainte if/then/else (signer_cert_fingerprint conditionnel selon proof_level) est supportée depuis draft-07. Le mot-clé 'format' reste annotatif dans les deux drafts ; valider 'bundle_id' via le pattern regex si le validateur ne supporte pas format:uuid."
+}

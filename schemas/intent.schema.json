@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rain.art/schemas/v0.1.0/intent.schema.json",
+  "title": "RAIN Intent Declaration",
+  "description": "Déclare l'intention humaine derrière le processus de création. Ce document est la déclaration auto-rapportée de l'auteur ; RAIN ne vérifie pas la véracité du contenu, seulement la cohérence structurelle et l'impact sur le Proof Level effectif. Un intent_timing POST_LATE plafonne le bundle à P1 quelle que soit la source class.",
+  "type": "object",
+  "required": [
+    "purpose",
+    "human_role",
+    "ai_tools_used",
+    "review_performed",
+    "disclosure_scope",
+    "intent_timing"
+  ],
+  "properties": {
+    "purpose": {
+      "type": "string",
+      "description": "Description libre de l'intention créative ou fonctionnelle de l'œuvre. Ni vérifiée ni interprétée par le vérificateur RAIN ; sert de signal contextuel pour l'humain qui consulte le bundle.",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "human_role": {
+      "type": "string",
+      "description": "Rôle principal joué par le déclarant dans le processus de création. 'auteur' : initiative et direction créative assumées par l'humain. 'superviseur' : l'humain supervise et oriente un processus majoritairement automatisé. 'validateur' : l'humain valide a posteriori un output IA sans direction initiale.",
+      "enum": ["auteur", "superviseur", "validateur"]
+    },
+    "ai_tools_used": {
+      "type": "array",
+      "description": "Liste des outils ou modèles d'IA utilisés dans le processus de création (ex. ['claude-sonnet-4-6', 'midjourney-v6', 'custom-lora']). Tableau vide autorisé si aucun outil IA n'a été utilisé (bundle purement humain).",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "review_performed": {
+      "type": "boolean",
+      "description": "Indique si une revue humaine du contenu généré par l'IA a été effectuée avant finalisation. true = revue réalisée. false = output IA utilisé sans revue, ce qui peut affecter le Proof Level effectif selon la politique."
+    },
+    "disclosure_scope": {
+      "type": "string",
+      "description": "Portée de divulgation prévue du bundle et de son contenu. 'private' : usage interne, non diffusé. 'internal' : diffusion restreinte à une organisation ou un groupe défini. 'public' : diffusion publique sans restriction d'audience.",
+      "enum": ["private", "internal", "public"]
+    },
+    "intent_timing": {
+      "type": "string",
+      "description": "Moment de la déclaration d'intention par rapport à la première itération IA. 'PRE' : déclaration antérieure à toute utilisation d'outil IA (niveau maximal de confiance). 'POST_24H' : déclaration dans les 24h suivant la première itération (acceptable). 'POST_LATE' : déclaration au-delà de 24h — plafonne le bundle à P1 (déclaratif uniquement), quelle que soit la source class ou l'attestation class.",
+      "enum": ["PRE", "POST_24H", "POST_LATE"]
+    }
+  },
+  "additionalProperties": false,
+  "$comment": "draft-07 fallback: remplacer '$schema' par 'http://json-schema.org/draft-07/schema#'. Tous les mots-clés utilisés (enum, minLength, maxLength, uniqueItems, boolean) sont pleinement supportés en draft-07. Aucune fonctionnalité exclusive à draft 2020-12 n'est utilisée dans ce schema."
+}

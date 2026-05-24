@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rain.art/schemas/v0.1.0/bundle-index.schema.json",
+  "title": "RAIN Bundle Index",
+  "description": "Point d'entrée du ZIP pour le vérificateur RAIN. Ce fichier index déclare les références (noms de fichiers relatifs à la racine du bundle) vers chacun des composants normativement définis d'un Evidence Bundle. Le vérificateur charge ce fichier en premier, en déduit le graphe de résolution, et valide que chaque référence correspond à une entrée présente dans manifest.files. Les champs absents signifient que le composant correspondant n'est pas inclus dans ce bundle.",
+  "type": "object",
+  "required": ["manifest_ref"],
+  "properties": {
+    "manifest_ref": {
+      "type": "string",
+      "description": "Chemin relatif vers le fichier manifest du bundle (ex. 'manifest.json'). Ce fichier doit être conforme à manifest.schema.json. Absence de ce champ indique un bundle sans manifest — condition d'erreur critique pour le vérificateur.",
+      "minLength": 1
+    },
+    "intent_ref": {
+      "type": "string",
+      "description": "Chemin relatif vers le fichier de déclaration d'intention (ex. 'intent.json'). Ce fichier doit être conforme à intent.schema.json. Absence : le bundle est traité comme sans intention déclarée, ce qui plafonne le Proof Level effectif.",
+      "minLength": 1
+    },
+    "mals_refs": {
+      "type": "array",
+      "description": "Liste ordonnée des chemins relatifs vers les fichiers de logs MALS (ex. ['mals/session-001.json', 'mals/session-002.json']). Chaque entrée doit être conforme à mals-log.schema.json. Tableau vide ou absence : aucun log IA inclus (bundle P1 déclaratif au maximum).",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "policy_ref": {
+      "type": "string",
+      "description": "Chemin relatif vers le fichier de politique d'usage (ex. 'policy.json'). Ce fichier doit être conforme à policy.schema.json. Absence : la politique par défaut du vérificateur s'applique.",
+      "minLength": 1
+    },
+    "timestamp_ref": {
+      "type": "string",
+      "description": "Chemin relatif vers le fichier de timestamp RFC 3161 (ex. 'timestamp.tsr'). Utilisé par le vérificateur pour ancrer le bundle dans le temps de façon cryptographiquement vérifiable. Absence : pas d'horodatage qualifié, ce qui peut affecter le Proof Level effectif.",
+      "minLength": 1
+    },
+    "signature_ref": {
+      "type": "string",
+      "description": "Chemin relatif vers le fichier de signature du bundle (ex. 'bundle.sig'). Requis pour les bundles P2 et P3. Absence pour un bundle déclarant P2 ou P3 dans son manifest entraîne un DOWNGRADE.",
+      "minLength": 1
+    },
+    "cert_ref": {
+      "type": "string",
+      "description": "Chemin relatif vers le certificat du signataire (ex. 'signer.crt', format PEM ou DER). Doit correspondre au signer_cert_fingerprint déclaré dans le manifest. Absence en présence d'une signature_ref est une condition d'erreur pour le vérificateur.",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false,
+  "$comment": "draft-07 fallback: remplacer '$schema' par 'http://json-schema.org/draft-07/schema#'. Aucun champ de ce schema n'est marqué 'required' : un index partiel est valide (le vérificateur dégrade ou avertit selon les composants manquants). Tous les mots-clés utilisés sont compatibles draft-07. Les références entre schemas ($ref vers les autres fichiers *.schema.json) ne sont pas incluses ici car l'index ne valide pas le contenu des composants, seulement leurs chemins."
+}

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rain.art/schemas/v0.1.0/mals-log.schema.json",
+  "title": "RAIN MALS Session Log",
+  "description": "Journal de session IA au format MALS (Model-Agnostic Log Schema). Format ouvert et agnostique au fournisseur — agrège les logs de plusieurs modèles dans un schéma unique. CONTRAINTE STRICTE DE CONFIDENTIALITÉ : ce schema n'autorise jamais les prompts en clair, les textes de réponse, ni aucun contenu généré ; seuls des hashes et des compteurs sont admis. Toute implémentation qui persiste du contenu clair dans ce document viole le protocole RAIN.",
+  "type": "object",
+  "required": [
+    "session_id",
+    "source_class",
+    "attestation_class",
+    "session_hash"
+  ],
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "description": "Identifiant unique et opaque de la session IA. Format UUID v4 recommandé. Invariant pour la durée de vie du log ; utilisé comme clé de déduplication par le vérificateur.",
+      "minLength": 1
+    },
+    "provider": {
+      "type": "string",
+      "description": "Nom du fournisseur de modèle IA (ex. 'Anthropic', 'OpenAI', 'Mistral', 'local'). Informatif ; non vérifié cryptographiquement sauf en attestation_class 'session-signed' ou 'live'.",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string",
+      "description": "Identifiant du modèle utilisé tel que retourné par l'API fournisseur (ex. 'claude-sonnet-4-6', 'gpt-4o-2024-08-06'). Informatif ; non vérifié cryptographiquement sauf en attestation_class 'session-signed' ou 'live'.",
+      "minLength": 1
+    },
+    "source_class": {
+      "type": "string",
+      "description": "Origine du log MALS, détermine le plafond de Proof Level. 'native' : export direct depuis l'API du fournisseur (plafond P3). 'sdk' : capturé et structuré par le SDK RAIN en temps réel (plafond P2). 'manual' : importé ou rédigé manuellement par l'utilisateur (plafond P1). Le niveau déclaré dans le manifest ne peut pas excéder ce plafond.",
+      "enum": ["native", "sdk", "manual"]
+    },
+    "attestation_class": {
+      "type": "string",
+      "description": "Mode de scellement du log, indépendant de la source_class, contribue aussi au plafonnement du Proof Level. 'post-session' : hash calculé et signé après la fin de session (niveau de confiance standard). 'session-signed' : chaque itération est signée en temps réel pendant la session (niveau de confiance élevé, requis pour P2). 'live' : attestation produite en continu avec ancrage externe (niveau maximal, contribue à P3).",
+      "enum": ["post-session", "session-signed", "live"]
+    },
+    "started_at": {
+      "type": "string",
+      "description": "Horodatage ISO 8601 du début de la session IA. Doit être antérieur à ended_at si les deux sont présents.",
+      "format": "date-time"
+    },
+    "ended_at": {
+      "type": "string",
+      "description": "Horodatage ISO 8601 de la fin de la session IA. Doit être postérieur à started_at si les deux sont présents.",
+      "format": "date-time"
+    },
+    "iterations": {
+      "type": "array",
+      "description": "Séquence ordonnée des itérations de la session. RAPPEL : aucun contenu en clair n'est admis — uniquement des hashes d'entrées/sorties et des métadonnées structurelles.",
+      "items": {
+        "type": "object",
+        "required": ["seq", "action", "input_hash", "output_hash", "ts"],
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "description": "Numéro de séquence de l'itération, débutant à 1. Doit être strictement croissant au sein d'un même log.",
+            "minimum": 1
+          },
+          "action": {
+            "type": "string",
+            "description": "Type d'action réalisée lors de cette itération (ex. 'prompt', 'tool_call', 'tool_result', 'revision', 'rejection'). Vocabulaire libre mais cohérent au sein d'un bundle.",
+            "minLength": 1
+          },
+          "input_hash": {
+            "type": "string",
+            "description": "Hash SHA-256 ou SHA3-256 de l'entrée de cette itération (prompt, instruction, contexte), encodé en hexadécimal minuscule. Ne jamais stocker le texte source.",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "output_hash": {
+            "type": "string",
+            "description": "Hash SHA-256 ou SHA3-256 de la sortie produite par le modèle lors de cette itération, encodé en hexadécimal minuscule. Ne jamais stocker le texte généré.",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "ts": {
+            "type": "string",
+            "description": "Horodatage ISO 8601 de cette itération.",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "session_hash": {
+      "type": "string",
+      "description": "Hash canonique de l'ensemble de la session, calculé sur la concaténation ordonnée des input_hash et output_hash de toutes les itérations (SHA-256 ou SHA3-256 selon la politique). Encodé en hexadécimal minuscule (64 caractères). C'est ce champ qui est signé par le SDK en mode session-signed.",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "additionalProperties": false,
+  "$comment": "draft-07 fallback: remplacer '$schema' par 'http://json-schema.org/draft-07/schema#'. Tous les mots-clés utilisés sont supportés depuis draft-07. Note sur la contrainte de confidentialité : ce schema ne peut pas encoder structurellement l'interdiction de stocker du texte en clair dans des champs non définis — elle est normative et relève de l'implémentation, pas de la validation syntaxique."
+}

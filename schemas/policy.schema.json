@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rain.art/schemas/v0.1.0/policy.schema.json",
+  "title": "RAIN Usage Policy",
+  "description": "Règles d'usage applicables au bundle, définissant les contraintes organisationnelles ou juridictionnelles sur l'utilisation des outils IA, les exigences de revue humaine, et les algorithmes de hash autorisés. La policy est résolue par le vérificateur avant d'évaluer le Proof Level effectif ; une incohérence entre la policy et le contenu du bundle entraîne un DOWNGRADE ou un exit code d'erreur.",
+  "type": "object",
+  "required": [
+    "policy_id",
+    "version"
+  ],
+  "properties": {
+    "policy_id": {
+      "type": "string",
+      "description": "Identifiant unique et stable de cette politique. Format URN ou UUID recommandé (ex. 'urn:rain:policy:default-v1', 'org.example:policy:creative-ai-2026'). Utilisé comme clé de référence dans bundle-index.schema.json.",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "description": "Version de cette politique. Format SemVer recommandé (ex. '1.0.0'). Combiné avec policy_id, permet au vérificateur de détecter un changement de politique depuis l'émission du bundle.",
+      "minLength": 1
+    },
+    "allowed_models": {
+      "type": "array",
+      "description": "Liste des identifiants de modèles IA autorisés par cette politique. Si absent ou tableau vide, tous les modèles sont autorisés. Si non vide, tout modèle présent dans un mals-log et absent de cette liste déclenche un DOWNGRADE.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "human_review_required": {
+      "type": "boolean",
+      "description": "Si true, la politique exige qu'une revue humaine ait été effectuée (review_performed = true dans intent.json). Un bundle avec human_review_required:true et review_performed:false est DOWNGRADED. Si absent, la revue n'est pas obligatoire."
+    },
+    "jurisdiction": {
+      "type": "string",
+      "description": "Code ISO 3166-1 alpha-2 (pays, ex. 'FR', 'US', 'DE') ou ISO 3166-2 (région, ex. 'US-CA') indiquant la juridiction sous laquelle cette politique est émise. Informatif pour le vérificateur ; peut déclencher des avertissements selon les règles de conformité locales.",
+      "pattern": "^[A-Z]{2}(-[A-Z0-9]{1,3})?$"
+    },
+    "hash_algorithms": {
+      "type": "array",
+      "description": "Algorithmes de hash autorisés pour les empreintes dans ce bundle. RAIN impose un double-hash par défaut (SHA-256 + SHA3-256) pour la résistance aux collisions croisées. L'array permet la crypto-agilité : une politique peut restreindre ou étendre les algorithmes acceptés pour une migration future (ex. ajout de BLAKE3). Le vérificateur rejette tout hash présent dans le bundle dont l'algorithme n'est pas listé ici.",
+      "items": {
+        "type": "string",
+        "enum": ["SHA-256", "SHA3-256", "BLAKE3"]
+      },
+      "uniqueItems": true,
+      "minItems": 1,
+      "default": ["SHA-256", "SHA3-256"]
+    }
+  },
+  "additionalProperties": false,
+  "$comment": "draft-07 fallback: remplacer '$schema' par 'http://json-schema.org/draft-07/schema#'. Le mot-clé 'default' est supporté depuis draft-07 (annotatif). Tous les autres mots-clés utilisés sont compatibles. Le pattern ISO 3166 couvre alpha-2 et ISO 3166-2 simple ; des codes de subdivision plus complexes nécessiteraient un pattern étendu."
+}
