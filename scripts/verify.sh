@@ -42,6 +42,8 @@ DECLARED_LEVEL=""
 EFFECTIVE_LEVEL="unknown"
 FINAL_STATUS="VALID"
 MANIFEST_FILE=""
+TIMESTAMP_STATUS="absent"
+TIMESTAMP_DATE=""
 
 # ── Display helpers ───────────────────────────────────────────────────────────
 
@@ -380,6 +382,82 @@ else
     _info "skipped — prior steps failed"
 fi
 
+# ── STEP 5: Timestamp (RFC 3161) ──────────────────────────────────────────────
+_section "STEP 5 — Timestamp (RFC 3161)"
+
+if [[ "$STEP1_PASS" == true ]]; then
+
+    # Locate entry with role=timestamp in manifest files[].
+    _TSR_NAME=""
+    while IFS=$'\t' read -r fname _s256 _s3 role; do
+        [[ -z "$fname" ]] && continue
+        [[ "$role" == "timestamp" ]] && { _TSR_NAME="$fname"; break; }
+    done < <(py_get_files "$MANIFEST_FILE")
+
+    if [[ -z "$_TSR_NAME" ]]; then
+        # Timestamp is optional — absence is not an error.
+        _info "no timestamp present"
+        TIMESTAMP_STATUS="absent"
+    else
+        _TSR_FILE="${BUNDLE_DIR}/${_TSR_NAME}"
+
+        # 1. Physical presence (declared but missing = integrity failure).
+        if [[ ! -f "$_TSR_FILE" ]]; then
+            add_error "TIMESTAMP_MISSING: declared in manifest but file absent (${_TSR_NAME})"
+            TIMESTAMP_STATUS="invalid"
+        else
+            _ok "${_TSR_NAME} found"
+
+            # 2. Reference digest (stored by timestamp-bundle.sh in bundle-index.json).
+            _TS_DIGEST=""
+            _TS_DIGEST="$(py_get_str "$INDEX_FILE" "timestamp_data_sha256" 2>/dev/null)" || true
+
+            if [[ -z "$_TS_DIGEST" ]]; then
+                add_downgrade "TIMESTAMP_UNVERIFIABLE: no reference digest in bundle-index"
+                TIMESTAMP_STATUS="unverifiable"
+            else
+                _ok "Reference digest: ${_TS_DIGEST:0:16}…"
+
+                # 3. TSA certificates — their absence is a warning, not a failure.
+                _TSA_CA="${REPO_ROOT}/tsa/freetsa-cacert.pem"
+                _TSA_CERT="${REPO_ROOT}/tsa/freetsa-tsa.crt"
+
+                if [[ ! -f "$_TSA_CA" || ! -f "$_TSA_CERT" ]]; then
+                    _warn "TIMESTAMP_UNANCHORED: TSA certs unavailable, timestamp not verified"
+                    TIMESTAMP_STATUS="unverifiable"
+                else
+                    # 4. Cryptographic verification against the stored pre-TSR digest.
+                    if openssl ts -verify \
+                            -digest "${_TS_DIGEST}" \
+                            -sha256 \
+                            -in "${_TSR_FILE}" \
+                            -CAfile "${_TSA_CA}" \
+                            -untrusted "${_TSA_CERT}" \
+                            > /dev/null 2>&1; then
+                        _ok "RFC 3161 timestamp verified"
+                        TIMESTAMP_STATUS="verified"
+                        TIMESTAMP_DATE="$(openssl ts -reply -in "${_TSR_FILE}" -text 2>/dev/null \
+                            | python3 -c "
+import sys
+for line in sys.stdin:
+    if 'Time stamp:' in line:
+        print(line.split('Time stamp:')[1].strip())
+        break
+" || true)"
+                        [[ -n "$TIMESTAMP_DATE" ]] && _ok "Timestamp date: ${TIMESTAMP_DATE}"
+                    else
+                        add_error "TIMESTAMP_INVALID: token does not verify against reference digest"
+                        TIMESTAMP_STATUS="invalid"
+                    fi
+                fi
+            fi
+        fi
+    fi
+
+else
+    _info "skipped — structure check failed"
+fi
+
 # ── Effective level ────────────────────────────────────────────────────────────
 
 case "$FINAL_STATUS" in
@@ -399,6 +477,8 @@ if [[ "$JSON_MODE" == true ]]; then
         (( ${#ERRORS[@]} > 0 ))   && printf '%s\n' "${ERRORS[@]}"   || true
         printf '%s\n' "${#WARNINGS[@]}"
         (( ${#WARNINGS[@]} > 0 )) && printf '%s\n' "${WARNINGS[@]}" || true
+        printf '%s\n' "${TIMESTAMP_STATUS}"
+        printf '%s\n' "${TIMESTAMP_DATE}"
     } | python3 -c "
 import json, sys
 lines = sys.stdin.read().splitlines()
@@ -409,14 +489,20 @@ effective = lines[i]; i += 1
 ne        = int(lines[i]); i += 1
 errors    = lines[i:i+ne]; i += ne
 nw        = int(lines[i]); i += 1
-warnings  = lines[i:i+nw]
-print(json.dumps({
-    'status':          status,
-    'declared_level':  declared,
-    'effective_level': effective,
-    'errors':          errors,
-    'warnings':        warnings,
-}, indent=2, ensure_ascii=False))
+warnings  = lines[i:i+nw]; i += nw
+ts_status = lines[i]; i += 1
+ts_date   = lines[i] if i < len(lines) else ''
+out = {
+    'status':           status,
+    'declared_level':   declared,
+    'effective_level':  effective,
+    'errors':           errors,
+    'warnings':         warnings,
+    'timestamp_status': ts_status,
+}
+if ts_date:
+    out['timestamp_date'] = ts_date
+print(json.dumps(out, indent=2, ensure_ascii=False))
 "
 else
     printf '\n'
