@@ -6,7 +6,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCHEMAS_DIR="$(dirname "$SCRIPT_DIR")/schemas"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+SCHEMAS_DIR="${REPO_ROOT}/schemas"
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
@@ -297,19 +298,77 @@ if [[ "$STEP3_PASS" == true ]]; then
     _ok "Declared level: ${DECLARED_LEVEL}"
 
     if [[ "$DECLARED_LEVEL" == "P2" || "$DECLARED_LEVEL" == "P3" ]]; then
-        SIG_FOUND=false
-        while IFS=$'\t' read -r fname _s256 _s3 role; do
-            [[ -z "$fname" ]] && continue
-            if [[ "$role" == "signature" && -f "${BUNDLE_DIR}/${fname}" ]]; then
-                SIG_FOUND=true
-                _ok "Signature file found: ${fname}"
-                break
-            fi
-        done < <(py_get_files "$MANIFEST_FILE")
 
-        if [[ "$SIG_FOUND" == false ]]; then
-            add_downgrade "PROOF_DOWNGRADE: declared ${DECLARED_LEVEL} but no signature found"
+        # ── 1. manifest.sig ────────────────────────────────────────────────
+        _SIG_FILE="${BUNDLE_DIR}/manifest.sig"
+        if [[ ! -f "$_SIG_FILE" ]]; then
+            add_downgrade "PROOF_DOWNGRADE: declared ${DECLARED_LEVEL} but manifest.sig missing"
+        else
+            _ok "manifest.sig found"
+
+            # ── 2. Certificate file (role=certificate in files[]) ──────────
+            _CERT_FILE=""
+            while IFS=$'\t' read -r fname _s256 _s3 role; do
+                [[ -z "$fname" ]] && continue
+                [[ "$role" == "certificate" ]] && { _CERT_FILE="${BUNDLE_DIR}/${fname}"; break; }
+            done < <(py_get_files "$MANIFEST_FILE")
+
+            if [[ -z "$_CERT_FILE" || ! -f "$_CERT_FILE" ]]; then
+                add_downgrade "PROOF_DOWNGRADE: declared ${DECLARED_LEVEL} but signer certificate missing"
+            else
+                _ok "Signer certificate found: $(basename "$_CERT_FILE")"
+
+                # ── 3. Cryptographic signature verification ────────────────
+                _PUBKEY_TMP="$(mktemp)"
+                _SIG_OK=false
+                if openssl x509 -in "$_CERT_FILE" -pubkey -noout \
+                       > "$_PUBKEY_TMP" 2>/dev/null && \
+                   openssl pkeyutl -verify -pubin -inkey "$_PUBKEY_TMP" \
+                       -rawin -in "$MANIFEST_FILE" -sigfile "$_SIG_FILE" \
+                       > /dev/null 2>&1; then
+                    _SIG_OK=true
+                fi
+                rm -f "$_PUBKEY_TMP"
+
+                if [[ "$_SIG_OK" == true ]]; then
+                    _ok "Ed25519 signature verified"
+                else
+                    add_error "SIGNATURE_INVALID: manifest signature does not verify"
+                fi
+
+                # ── 4. Fingerprint match ────────────────────────────────────
+                _DECL_FP="$(py_get_str "$MANIFEST_FILE" "signer_cert_fingerprint" 2>/dev/null)" || _DECL_FP=""
+                if [[ -n "$_DECL_FP" ]]; then
+                    _ACTUAL_FP_RAW="$(openssl x509 -in "$_CERT_FILE" -noout \
+                        -fingerprint -sha256 2>/dev/null || true)"
+                    _ACTUAL_FP="${_ACTUAL_FP_RAW#*=}"     # strip "sha256 Fingerprint="
+                    _ACTUAL_FP="${_ACTUAL_FP//:/}"         # strip colons
+                    _ACTUAL_FP="$(printf '%s' "$_ACTUAL_FP" | tr '[:upper:]' '[:lower:]')"
+                    if [[ "$_ACTUAL_FP" == "$_DECL_FP" ]]; then
+                        _ok "signer_cert_fingerprint matches"
+                    else
+                        add_error "CERT_FINGERPRINT_MISMATCH: declared ${_DECL_FP}, actual ${_ACTUAL_FP}"
+                    fi
+                else
+                    _warn "signer_cert_fingerprint absent from manifest — not checked"
+                fi
+
+                # ── 5. CA chain verification ────────────────────────────────
+                # Downgrade (not INVALID): CA may legitimately be unavailable at verify time.
+                _CA_CERT="${REPO_ROOT}/pki/ca-cert.pem"
+                if [[ -f "$_CA_CERT" ]]; then
+                    if openssl verify -CAfile "$_CA_CERT" "$_CERT_FILE" \
+                           > /dev/null 2>&1; then
+                        _ok "CA chain verified"
+                    else
+                        add_downgrade "CHAIN_UNTRUSTED: signer cert not signed by known CA"
+                    fi
+                else
+                    _warn "CHAIN_UNVERIFIED: no CA available, signature authenticity not anchored"
+                fi
+            fi
         fi
+
     else
         _ok "P1 — no signature required"
     fi

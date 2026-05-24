@@ -1,0 +1,5 @@
+{
+  "policy_id": "urn:rain:policy:test-default-v1",
+  "version": "1.0.0",
+  "hash_algorithms": ["SHA-256", "SHA3-256"]
+}

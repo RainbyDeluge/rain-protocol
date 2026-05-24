@@ -1,0 +1,8 @@
+{
+  "purpose": "FALSIFIÉ — contenu modifié après signature pour tester la détection SIGNATURE_INVALID.",
+  "human_role": "auteur",
+  "ai_tools_used": [],
+  "review_performed": true,
+  "disclosure_scope": "public",
+  "intent_timing": "PRE"
+}

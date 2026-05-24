@@ -213,3 +213,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# PKI — private keys must never be committed
+pki/

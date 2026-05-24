@@ -31,6 +31,7 @@ run_case() {
 run_case "test-vectors/valid-p1"           0  "valid-p1           → VALID"
 run_case "test-vectors/tampered-hash"      1  "tampered-hash      → INVALID"
 run_case "test-vectors/downgrade-p2-nosig" 2  "downgrade-p2-nosig → DOWNGRADE"
+run_case "test-vectors/tampered-sig"       1  "tampered-sig       → INVALID (SIGNATURE_INVALID)"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
