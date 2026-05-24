@@ -1,0 +1,27 @@
+{
+  "rain_version": "0.1.0",
+  "bundle_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "created_at": "2026-05-24T21:00:00Z",
+  "proof_level": "P2",
+  "signer_cert_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+  "files": [
+    {
+      "name": "artwork.txt",
+      "sha256": "952b9e110fc1a5d62ef6b4dafb8257f4edac3fbdc5b701ae6cdd15fa531cf106",
+      "sha3_256": "c1e5a1e2cc0f53dd29b492930fd53e0978d1f91a724c2dff5a16f1a440464823",
+      "role": "artwork"
+    },
+    {
+      "name": "intent.json",
+      "sha256": "ff47a07808cf43ed19fbde2c1c9a809d0fd220dfe052ad99a79a2d318f16376b",
+      "sha3_256": "5c3ddd0eafd85b7e955ccbfae91ec0368aa197ab00f714d82a695747a42b6a1c",
+      "role": "intent"
+    },
+    {
+      "name": "policy.json",
+      "sha256": "ebe5b30398fb01b909c9150cf64e2aa4db8350b6a520a268dc55ddec6cf55cda",
+      "sha3_256": "ab7205feadc68edd803fc34ba7f4727e0753a90e52a1de4ed87943142d3a8df5",
+      "role": "policy"
+    }
+  ]
+}
