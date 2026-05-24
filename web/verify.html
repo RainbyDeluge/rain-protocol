@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAIN // VERIFY</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/js-sha3/0.9.3/sha3.min.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<style>
+:root {
+  --bg:   #0A0A0A;
+  --bg2:  #0D0D0D;
+  --bg3:  #111;
+  --bdr:  #1A1A1A;
+  --bdr2: #252525;
+  --mg:   #E91E8C;
+  --gd:   #FFB800;
+  --cy:   #00E5FF;
+  --gr:   #00FF88;
+  --rd:   #FF2D55;
+  --tx:   #7A7A7A;
+  --tx2:  #C4C4C4;
+  --tx0:  #363636;
+  --f:    'Consolas','Menlo','Monaco','Courier New',monospace;
+}
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background-color: var(--bg);
+  background-image: radial-gradient(circle, rgba(36,36,36,.5) 1px, transparent 1px);
+  background-size: 22px 22px;
+  color: var(--tx);
+  font-family: var(--f);
+  font-size: 13px;
+  line-height: 1.7;
+  min-height: 100vh;
+}
+
+/* scanlines */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0, transparent 1px,
+    rgba(0,0,0,.1) 1px, rgba(0,0,0,.1) 2px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.wrap { max-width: 880px; margin: 0 auto; padding: 52px 24px 96px; }
+
+/* ── HEADER ────────────────────────────────────────────────────────────── */
+header {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--bdr);
+  margin-bottom: 48px;
+}
+.logo {
+  font-size: 24px; letter-spacing: .2em; color: var(--tx2); font-weight: 400;
+}
+.logo .s { color: var(--mg); }
+.logo .v { color: var(--cy); }
+.ver { font-size: 10px; color: var(--tx0); letter-spacing: .1em; margin-left: auto; }
+.tag {
+  flex-basis: 100%; margin-top: 2px;
+  font-size: 10px; color: var(--tx0); letter-spacing: .06em;
+}
+
+/* ── DROP ZONE ─────────────────────────────────────────────────────────── */
+.dz {
+  position: relative;
+  border: 1px solid var(--bdr2);
+  background: var(--bg2);
+  padding: 64px 40px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  user-select: none;
+}
+.dz:hover, .dz.over { border-color: var(--mg); background: rgba(233,30,140,.018); }
+
+/* animated corner brackets */
+.dz::before, .dz::after {
+  content: '';
+  position: absolute;
+  width: 14px; height: 14px;
+  border-color: var(--mg); border-style: solid;
+  opacity: 0; transition: opacity .15s;
+}
+.dz:hover::before, .dz.over::before { opacity: 1; }
+.dz:hover::after,  .dz.over::after  { opacity: 1; }
+.dz::before { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+.dz::after  { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+
+.dz-icon {
+  display: block;
+  font-size: 26px; letter-spacing: .06em;
+  color: var(--tx0); margin-bottom: 18px;
+  transition: color .15s;
+}
+.dz:hover .dz-icon, .dz.over .dz-icon { color: var(--mg); }
+
+.dz-title {
+  font-size: 11px; letter-spacing: .2em;
+  color: var(--tx); margin-bottom: 6px;
+}
+.dz-sub { font-size: 11px; color: var(--tx0); }
+.dz-sub a { color: var(--cy); text-decoration: none; cursor: pointer; }
+.dz-sub a:hover { text-decoration: underline; }
+input[type=file] { display: none; }
+
+/* ── STATUS BAR ────────────────────────────────────────────────────────── */
+.sb {
+  margin-top: 8px; padding: 7px 12px;
+  border: 1px solid var(--bdr); background: var(--bg2);
+  font-size: 11px; color: var(--tx0); letter-spacing: .05em;
+  display: flex; align-items: center; gap: 8px; min-height: 30px;
+}
+.sb.proc { color: var(--gd); border-color: rgba(255,184,0,.2); }
+.sb.err  { color: var(--rd); border-color: rgba(255,45, 85,.2); }
+.sb .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; flex-shrink: 0;
+}
+.sb.proc .dot { animation: pulse .9s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .2; } }
+
+/* ── RESULTS ───────────────────────────────────────────────────────────── */
+.res { margin-top: 40px; display: none; }
+.res.on { display: block; animation: fadein .28s ease-out; }
+@keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* verdict */
+.vd {
+  padding: 52px 40px; border: 1px solid var(--bdr);
+  text-align: center; margin-bottom: 32px;
+  position: relative; overflow: hidden;
+}
+.vd::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  transition: opacity .5s;
+}
+.vd.ok::before  {
+  background: radial-gradient(ellipse 70% 50% at 50% 110%, rgba(0,255,136,.06), transparent);
+  opacity: 1;
+}
+.vd.bad::before {
+  background: radial-gradient(ellipse 70% 50% at 50% 110%, rgba(255,45,85,.06), transparent);
+  opacity: 1;
+}
+.vd-label {
+  font-size: 10px; letter-spacing: .22em; color: var(--tx0);
+  text-transform: uppercase; margin-bottom: 14px;
+}
+.vd-main {
+  font-size: 54px; letter-spacing: .08em; font-weight: 400;
+  margin-bottom: 12px; line-height: 1;
+}
+.vd.ok  .vd-main { color: var(--gr); text-shadow: 0 0 60px rgba(0,255,136,.3); }
+.vd.bad .vd-main { color: var(--rd); text-shadow: 0 0 60px rgba(255,45, 85,.3); }
+.vd-sub { font-size: 12px; color: var(--tx0); letter-spacing: .05em; }
+
+.plv {
+  display: inline-block; padding: 1px 7px;
+  font-size: 10px; letter-spacing: .1em; border: 1px solid; margin-left: 8px;
+}
+.plv.p1 { color: var(--gd); border-color: rgba(255,184,0,.4); background: rgba(255,184,0,.06); }
+.plv.p2 { color: var(--cy); border-color: rgba(0,229,255,.4); background: rgba(0,229,255,.06); }
+
+/* sections */
+.sec { margin-bottom: 28px; }
+.sec-hd {
+  font-size: 10px; letter-spacing: .18em; color: var(--tx0);
+  text-transform: uppercase;
+  padding-bottom: 8px; border-bottom: 1px solid var(--bdr);
+  margin-bottom: 14px;
+}
+
+/* meta grid */
+.mg-grid {
+  display: grid; grid-template-columns: auto 1fr;
+  gap: 4px 20px; align-items: baseline;
+}
+.mk { font-size: 11px; color: var(--tx0); white-space: nowrap; letter-spacing: .04em; }
+.mv { font-size: 12px; color: var(--tx2); word-break: break-all; }
+
+/* intent box */
+.ib {
+  background: var(--bg3); border: 1px solid var(--bdr);
+  padding: 14px 16px;
+}
+.purpose {
+  font-size: 12px; color: var(--tx2); font-style: italic;
+  margin-bottom: 10px; line-height: 1.65;
+}
+.itag {
+  display: inline-block; font-size: 10px; letter-spacing: .07em;
+  padding: 1px 6px; border: 1px solid var(--bdr2);
+  color: var(--tx0); margin: 2px 3px 2px 0;
+}
+.itag.ai { color: var(--cy); border-color: rgba(0,229,255,.3); background: rgba(0,229,255,.04); }
+
+/* file table */
+.ft { width: 100%; border-collapse: collapse; }
+.ft th, .ft td {
+  padding: 7px 12px; text-align: left;
+  border-bottom: 1px solid var(--bdr);
+  font-size: 12px; font-family: var(--f);
+}
+.ft th {
+  font-size: 10px; letter-spacing: .12em; color: var(--tx0);
+  text-transform: uppercase; background: var(--bg3); font-weight: 400;
+}
+.ft tr:last-child td { border-bottom: none; }
+.ft tbody tr:hover td { background: rgba(255,255,255,.007); }
+.fn { color: var(--tx2); }
+.fr { color: var(--tx0); font-size: 11px; }
+.ck { white-space: nowrap; letter-spacing: .05em; }
+.ok- { color: var(--gr); }
+.bad- { color: var(--rd); }
+.na- { color: var(--tx0); }
+
+/* notice */
+.note {
+  margin-top: 32px; padding: 12px 16px;
+  border: 1px solid rgba(255,184,0,.15);
+  background: rgba(255,184,0,.02);
+  font-size: 11px; color: var(--tx0); line-height: 1.9;
+}
+.note b { color: var(--gd); }
+.note code {
+  font-family: var(--f); font-size: 11px;
+  color: var(--cy); background: rgba(0,229,255,.06);
+  padding: 1px 5px;
+}
+
+footer {
+  margin-top: 60px; padding-top: 16px;
+  border-top: 1px solid var(--bdr);
+  font-size: 10px; color: var(--tx0); letter-spacing: .07em;
+  display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="logo">RAIN <span class="s">//</span> <span class="v">VERIFY</span></div>
+  <div class="ver">v0.1.0</div>
+  <div class="tag">Responsible AI Notation — vérification côté navigateur — aucune donnée ne quitte votre appareil</div>
+</header>
+
+<div class="dz" id="dz">
+  <span class="dz-icon">[ ⊡ ]</span>
+  <div class="dz-title">DÉPOSEZ UN BUNDLE ICI</div>
+  <div class="dz-sub">Archive .zip (clic ou glisser-déposer) · Dossier (glisser-déposer) · ou <a id="br">parcourir</a></div>
+  <input type="file" id="fi" accept=".zip">
+</div>
+<div class="sb" id="sb"><span class="dot"></span><span id="sbx">PRÊT — déposez un bundle RAIN pour vérifier</span></div>
+
+<div class="res" id="res"></div>
+
+<div class="note">
+  <b>Périmètre v0 :</b> cette page vérifie l'intégrité des fichiers (SHA-256 + SHA3-256).
+  La vérification de la <b>signature Ed25519</b> et du <b>timestamp RFC 3161</b>
+  nécessite le CLI — exécutez <code>bash scripts/verify.sh &lt;bundle-dir&gt;</code>
+  pour un contrôle cryptographique complet.
+</div>
+
+<footer>
+  <span>RAIN PROTOCOL — RAIN Evidence Bundle Verifier</span>
+  <span>Deluge · rain-protocol v0.1.0</span>
+</footer>
+</div>
+
+<script>
+'use strict';
+
+const dz  = document.getElementById('dz');
+const fi  = document.getElementById('fi');
+const sb  = document.getElementById('sb');
+const sbx = document.getElementById('sbx');
+const res = document.getElementById('res');
+
+// ── Status ────────────────────────────────────────────────────────────────────
+
+function setStatus(msg, type) {
+  sbx.textContent = msg;
+  sb.className = 'sb' + (type ? ' ' + type : '');
+}
+
+// ── Events ────────────────────────────────────────────────────────────────────
+
+document.getElementById('br').addEventListener('click', e => { e.stopPropagation(); fi.click(); });
+fi.addEventListener('change', e => { if (e.target.files[0]) onFile(e.target.files[0]); fi.value = ''; });
+
+dz.addEventListener('click', e => { if (!e.target.closest('a')) fi.click(); });
+
+['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => {
+  e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+  dz.classList.add('over');
+}));
+dz.addEventListener('dragleave', e => {
+  if (!dz.contains(e.relatedTarget)) dz.classList.remove('over');
+});
+dz.addEventListener('drop', async e => {
+  e.preventDefault();
+  dz.classList.remove('over');
+  const items = e.dataTransfer.items;
+  if (!items || !items.length) return;
+  const item = items[0];
+  if (item.kind !== 'file') return;
+  const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+  if (entry && entry.isDirectory) {
+    await onDirectory(entry);
+  } else {
+    const f = item.getAsFile();
+    if (f) await onFile(f);
+  }
+});
+
+// ── Hash helpers ──────────────────────────────────────────────────────────────
+
+async function sha256hex(buf) {
+  const h = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function sha3hex(buf) {
+  if (typeof sha3_256 === 'undefined') throw new Error('js-sha3 non chargé (connexion internet requise)');
+  return sha3_256(new Uint8Array(buf));
+}
+
+// ── FileSystem API helpers ────────────────────────────────────────────────────
+
+function fsEntryBuffer(fileEntry) {
+  return new Promise((ok, fail) => {
+    fileEntry.file(f => f.arrayBuffer().then(ok, fail), fail);
+  });
+}
+
+async function readAllEntries(reader) {
+  return new Promise((ok, fail) => {
+    const all = [];
+    function batch() {
+      reader.readEntries(entries => {
+        if (!entries.length) return ok(all);
+        all.push(...entries);
+        batch();
+      }, fail);
+    }
+    batch();
+  });
+}
+
+async function dirToMap(dirEntry) {
+  const map = {};
+  const entries = await readAllEntries(dirEntry.createReader());
+  for (const e of entries) {
+    if (e.isFile) map[e.name] = await fsEntryBuffer(e);
+  }
+  return map;
+}
+
+// ── Input handlers ────────────────────────────────────────────────────────────
+
+async function onFile(file) {
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    setStatus('Format non supporté : déposez un .zip ou un dossier bundle', 'err');
+    return;
+  }
+  if (typeof JSZip === 'undefined') {
+    setStatus('Erreur : JSZip n\'a pas pu être chargé (connexion internet requise)', 'err');
+    return;
+  }
+  setStatus('Chargement du ZIP…', 'proc');
+  try {
+    const zip = await JSZip.loadAsync(file);
+    await fromZip(zip, file.name);
+  } catch (e) {
+    setStatus('Erreur : ' + e.message, 'err');
+  }
+}
+
+async function fromZip(zip, sourceName) {
+  // Detect prefix — files may live under one subdirectory
+  let prefix = '';
+  zip.forEach((path, entry) => {
+    if (!entry.dir && (path === 'manifest.json' || path.endsWith('/manifest.json'))) {
+      const i = path.lastIndexOf('/');
+      prefix = i >= 0 ? path.slice(0, i + 1) : '';
+    }
+  });
+
+  const map = {};
+  const loads = [];
+  zip.forEach((path, entry) => {
+    if (!entry.dir && path.startsWith(prefix)) {
+      const name = path.slice(prefix.length);
+      if (name) loads.push(entry.async('arraybuffer').then(b => { map[name] = b; }));
+    }
+  });
+  await Promise.all(loads);
+  await verify(map, sourceName);
+}
+
+async function onDirectory(dirEntry) {
+  setStatus('Lecture du dossier…', 'proc');
+  try {
+    const map = await dirToMap(dirEntry);
+    await verify(map, dirEntry.name);
+  } catch (e) {
+    setStatus('Erreur : ' + e.message, 'err');
+  }
+}
+
+// ── Core verifier ─────────────────────────────────────────────────────────────
+
+async function verify(map, sourceName) {
+  setStatus('Analyse du manifest…', 'proc');
+
+  if (!map['manifest.json']) {
+    setStatus('Erreur : manifest.json introuvable dans le bundle', 'err'); return;
+  }
+
+  let manifest;
+  try {
+    manifest = JSON.parse(new TextDecoder().decode(map['manifest.json']));
+  } catch (e) {
+    setStatus('Erreur : manifest.json — JSON invalide', 'err'); return;
+  }
+
+  if (!Array.isArray(manifest.files)) {
+    setStatus('Erreur : manifest.files manquant ou invalide', 'err'); return;
+  }
+
+  let intent = null;
+  if (map['intent.json']) {
+    try { intent = JSON.parse(new TextDecoder().decode(map['intent.json'])); } catch (e) {}
+  }
+
+  const results = [];
+  let allOk = true;
+
+  for (const entry of manifest.files) {
+    setStatus('Vérification : ' + entry.name + '…', 'proc');
+    const buf = map[entry.name];
+    if (!buf) {
+      results.push({ name: entry.name, role: entry.role, missing: true });
+      allOk = false;
+      continue;
+    }
+    let s256, s3;
+    try {
+      [s256, s3] = await Promise.all([sha256hex(buf), Promise.resolve(sha3hex(buf))]);
+    } catch (e) {
+      setStatus('Erreur de hachage : ' + e.message, 'err'); return;
+    }
+    const s256ok = entry.sha256   != null ? s256 === entry.sha256   : null;
+    const s3ok   = entry.sha3_256 != null ? s3   === entry.sha3_256 : null;
+    if (s256ok === false || s3ok === false) allOk = false;
+    results.push({ name: entry.name, role: entry.role, s256ok, s3ok });
+  }
+
+  setStatus('Vérification terminée.', '');
+  render({ sourceName, manifest, intent, results, allOk,
+           hasSig: !!map['manifest.sig'],
+           hasTsr: !!map['manifest.tsr'] });
+}
+
+// ── Renderer ──────────────────────────────────────────────────────────────────
+
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function render({ sourceName, manifest, intent, results, allOk, hasSig, hasTsr }) {
+  const pl      = (manifest.proof_level || 'P1').toUpperCase();
+  const plClass = pl === 'P2' ? 'p2' : 'p1';
+  const vClass  = allOk ? 'ok' : 'bad';
+  const vText   = allOk ? 'VALID' : 'INVALID';
+  const vSub    = allOk
+    ? results.length + ' fichier' + (results.length > 1 ? 's' : '') + ' — intégrité des hachages confirmée'
+    : 'Divergence détectée — données altérées ou corrompues';
+
+  // File rows
+  const rows = results.map(r => {
+    const n = esc(r.name), role = esc(r.role || '—');
+    if (r.missing) {
+      return '<tr><td class="fn">' + n + '</td><td class="fr">' + role + '</td>' +
+             '<td class="ck"><span class="bad-">✗ fichier absent</span></td></tr>';
+    }
+    const c256 = r.s256ok === null ? '<span class="na-">—</span>'
+               : r.s256ok ? '<span class="ok-">✓</span>' : '<span class="bad-">✗</span>';
+    const c3   = r.s3ok   === null ? '<span class="na-">—</span>'
+               : r.s3ok   ? '<span class="ok-">✓</span>' : '<span class="bad-">✗</span>';
+    return '<tr><td class="fn">' + n + '</td><td class="fr">' + role + '</td>' +
+           '<td class="ck">' + c256 + '&thinsp;SHA-256&ensp;' + c3 + '&thinsp;SHA3-256</td></tr>';
+  }).join('');
+
+  const extra = [
+    hasSig ? '<tr><td class="fn">manifest.sig</td><td class="fr">signature</td>' +
+              '<td class="ck"><span class="na-">présent — vérifiable via verify.sh</span></td></tr>' : '',
+    hasTsr ? '<tr><td class="fn">manifest.tsr</td><td class="fr">timestamp</td>' +
+              '<td class="ck"><span class="na-">présent — vérifiable via verify.sh</span></td></tr>' : '',
+  ].join('');
+
+  // Intent block
+  let intentHtml = '';
+  if (intent) {
+    const purpose = esc(intent.purpose || '');
+    const tags = [
+      intent.human_role      && '<span class="itag">' + esc(intent.human_role) + '</span>',
+      intent.intent_timing   && '<span class="itag">' + esc(intent.intent_timing) + '</span>',
+      intent.disclosure_scope && '<span class="itag">' + esc(intent.disclosure_scope) + '</span>',
+      ...(Array.isArray(intent.ai_tools_used)
+        ? intent.ai_tools_used.map(t => '<span class="itag ai">' + esc(t) + '</span>')
+        : []),
+    ].filter(Boolean).join('');
+    intentHtml = '<div class="sec">' +
+      '<div class="sec-hd">Intent déclarée</div>' +
+      '<div class="ib">' +
+        (purpose ? '<div class="purpose">&ldquo;' + purpose + '&rdquo;</div>' : '') +
+        (tags || '') +
+      '</div>' +
+    '</div>';
+  }
+
+  res.innerHTML =
+    '<div class="vd ' + vClass + '">' +
+      '<div class="vd-label">RÉSULTAT DE VÉRIFICATION</div>' +
+      '<div class="vd-main">' + vText + '</div>' +
+      '<div class="vd-sub">' + esc(vSub) + ' <span class="plv ' + plClass + '">' + pl + '</span></div>' +
+    '</div>' +
+
+    '<div class="sec">' +
+      '<div class="sec-hd">Métadonnées</div>' +
+      '<div class="mg-grid">' +
+        '<span class="mk">source</span>        <span class="mv">' + esc(sourceName) + '</span>' +
+        '<span class="mk">bundle_id</span>     <span class="mv">' + esc(manifest.bundle_id || '—') + '</span>' +
+        '<span class="mk">created_at</span>    <span class="mv">' + esc(manifest.created_at || '—') + '</span>' +
+        '<span class="mk">rain_version</span>  <span class="mv">' + esc(manifest.rain_version || '—') + '</span>' +
+        '<span class="mk">proof_level</span>   <span class="mv">' + esc(pl) + '</span>' +
+      '</div>' +
+    '</div>' +
+
+    intentHtml +
+
+    '<div class="sec">' +
+      '<div class="sec-hd">Intégrité des fichiers (' + results.length +
+        ' entr' + (results.length > 1 ? 'ées' : 'ée') + ')</div>' +
+      '<table class="ft">' +
+        '<thead><tr><th>Fichier</th><th>Rôle</th><th>Vérification</th></tr></thead>' +
+        '<tbody>' + rows + extra + '</tbody>' +
+      '</table>' +
+    '</div>';
+
+  res.classList.add('on');
+}
+</script>
+</body>
+</html>
