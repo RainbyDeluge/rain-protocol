@@ -1,0 +1,27 @@
+{
+  "alg": "Ed25519",
+  "private_key": "{{PRIVATE_KEY}}",
+  "sign_cert": "{{SIGN_CERT}}",
+  "claim_generator": "RAIN/0.1.0",
+  "assertions": [
+    {
+      "label": "c2pa.actions",
+      "data": {
+        "actions": [
+          {
+            "action": "c2pa.created",
+            "softwareAgent": "RAIN/0.1.0"
+          }
+        ]
+      }
+    },
+    {
+      "label": "rain.bundle",
+      "data": {
+        "bundle_id": "{{BUNDLE_ID}}",
+        "proof_level": "{{PROOF_LEVEL}}",
+        "rain_version": "{{RAIN_VERSION}}"
+      }
+    }
+  ]
+}

@@ -216,3 +216,9 @@ __marimo__/
 
 # PKI — private keys must never be committed
 pki/
+
+# C2PA bridge — private key generated from RAIN CA, never commit
+c2pa-bridge/*-key.pem
+c2pa-bridge/*.png
+c2pa-bridge/*.jpg
+c2pa-bridge/*.jpeg
