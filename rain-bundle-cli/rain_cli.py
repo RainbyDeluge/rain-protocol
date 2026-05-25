@@ -57,6 +57,10 @@ def main() -> None:
                    help="Proof level: P1=declarative, P2=signed (default: P1)")
     p.add_argument("--no-timestamp", action="store_true", dest="no_timestamp",
                    help="Skip RFC 3161 timestamping when using --level P2")
+    p.add_argument("--mals", type=Path, default=None, metavar="FILE",
+                   help="Path to a MALS session log (JSON) to embed in the bundle. "
+                        "Validated against mals-log.schema.json before integration; "
+                        "added to files[] with role 'mals-log' and sealed with the rest.")
     p.add_argument("--zip", action="store_true",
                    help="After building, produce RAIN-<bundle_id>.zip alongside the output directory")
     p.add_argument("--c2pa", action="store_true",
@@ -73,6 +77,11 @@ def main() -> None:
         print(f"Error: artwork file not found: {artwork}", file=sys.stderr)
         sys.exit(1)
 
+    mals = args.mals.resolve() if args.mals else None
+    if mals is not None and not mals.exists():
+        print(f"Error: MALS log file not found: {mals}", file=sys.stderr)
+        sys.exit(1)
+
     ai_tools = _parse_ai_tools(args.ai_tools)
     output   = args.output.resolve()
 
@@ -87,6 +96,8 @@ def main() -> None:
     print()
     if ai_tools:
         print(f"  ai-tools : {', '.join(ai_tools)}")
+    if mals:
+        print(f"  mals     : {mals.name}")
     print()
 
     # ── Build ─────────────────────────────────────────────────────────────────
@@ -102,6 +113,7 @@ def main() -> None:
             level=args.level,
             no_timestamp=args.no_timestamp,
             repo_root=REPO_ROOT,
+            mals_path=mals,
         )
     except RuntimeError as exc:
         print(f"\nError: {exc}", file=sys.stderr)

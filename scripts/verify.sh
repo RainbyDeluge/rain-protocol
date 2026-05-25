@@ -335,6 +335,25 @@ if [[ "$STEP2_PASS" == true ]]; then
         validate_doc "$full_path" "$schema" "$ref_val"
     done
 
+    # MALS log — validated against mals-log.schema.json if present in files[]
+    while IFS=$'\t' read -r fname _s256 _s3 role; do
+        [[ -z "$fname" ]] && continue
+        [[ "$role" != "mals-log" ]] && continue
+        full_path="${BUNDLE_DIR}/${fname}"
+        [[ ! -f "$full_path" ]] && continue
+
+        mals_out=""
+        mals_rc=0
+        mals_out="$(py_validate "$full_path" "${SCHEMAS_DIR}/mals-log.schema.json" 2>&1)" || mals_rc=$?
+        [[ -n "$mals_out" ]] && _log "$mals_out"
+        if (( mals_rc != 0 )); then
+            add_error "MALS_SCHEMA_INVALID: ${fname}"
+            STEP3_PASS=false
+        else
+            _ok "${fname} (mals-log) valid"
+        fi
+    done < <(py_get_files "$MANIFEST_FILE")
+
     [[ "$STEP3_PASS" == true ]] && _ok "Schema validation passed"
 else
     _info "skipped — hash check failed"

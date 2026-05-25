@@ -83,6 +83,7 @@ def create_bundle(
     level: str,
     no_timestamp: bool,
     repo_root: Path,
+    mals_path: Path | None = None,
 ) -> int:
     """
     Create a RAIN evidence bundle and return the exit code of verify.sh.
@@ -124,7 +125,19 @@ def create_bundle(
     _write_json(output_dir / "policy.json", policy)
     print("  created : policy.json", flush=True)
 
-    # ── 4. manifest.json ───────────────────────────────────────────────────────
+    # ── 4. mals-log (optional) ─────────────────────────────────────────────────
+    # Must be added to files_entries BEFORE the manifest is written so that it
+    # is covered by the manifest hash and therefore by the P2 signature.
+    mals_dest_name: str | None = None
+    if mals_path is not None:
+        mals_doc = json.loads(mals_path.read_text(encoding="utf-8"))
+        _validate(mals_doc, "mals-log.schema.json", schemas_dir)
+        session_id = mals_doc.get("session_id", "")
+        mals_dest_name = f"mals-{session_id}.json" if session_id else "mals-log.json"
+        shutil.copy2(mals_path, output_dir / mals_dest_name)
+        print(f"  copied  : {mals_dest_name} (mals-log)", flush=True)
+
+    # ── 5. manifest.json ───────────────────────────────────────────────────────
     # Always written as P1 initially: signer_cert_fingerprint is not yet known.
     # prepare-p2.sh will upgrade proof_level to P2 and inject the fingerprint.
     files_entries = []
@@ -135,6 +148,10 @@ def create_bundle(
     ]:
         sha256, sha3_256 = _hashes(output_dir / fname)
         files_entries.append({"name": fname, "sha256": sha256, "sha3_256": sha3_256, "role": role})
+
+    if mals_dest_name is not None:
+        sha256, sha3_256 = _hashes(output_dir / mals_dest_name)
+        files_entries.append({"name": mals_dest_name, "sha256": sha256, "sha3_256": sha3_256, "role": "mals-log"})
 
     manifest = {
         "rain_version": RAIN_VERSION,
@@ -147,7 +164,7 @@ def create_bundle(
     _write_json(output_dir / "manifest.json", manifest)
     print("  created : manifest.json", flush=True)
 
-    # ── 5. bundle-index.json ───────────────────────────────────────────────────
+    # ── 6. bundle-index.json ───────────────────────────────────────────────────
     index = {
         "manifest_ref": "manifest.json",
         "intent_ref":   "intent.json",
@@ -157,7 +174,7 @@ def create_bundle(
     _write_json(output_dir / "bundle-index.json", index)
     print("  created : bundle-index.json", flush=True)
 
-    # ── 6. P2 pipeline ─────────────────────────────────────────────────────────
+    # ── 7. P2 pipeline ─────────────────────────────────────────────────────────
     if level == "P2":
         _run_script(scripts_dir / "prepare-p2.sh",      output_dir, "prepare-p2.sh")
         if not no_timestamp:
@@ -166,7 +183,7 @@ def create_bundle(
             print("\n── timestamp-bundle.sh skipped (--no-timestamp) " + "─" * 13, flush=True)
         _run_script(scripts_dir / "sign-bundle.sh",     output_dir, "sign-bundle.sh")
 
-    # ── 7. Verify ──────────────────────────────────────────────────────────────
+    # ── 8. Verify ──────────────────────────────────────────────────────────────
     print("\n── verify.sh " + "─" * 48, flush=True)
     rc = subprocess.run(["bash", str(scripts_dir / "verify.sh"), str(output_dir)]).returncode
     return rc
