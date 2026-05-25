@@ -505,11 +505,14 @@ function render({ sourceName, manifest, intent, results, allOk, hasSig, hasTsr }
            '<td class="ck">' + c256 + '&thinsp;SHA-256&ensp;' + c3 + '&thinsp;SHA3-256</td></tr>';
   }).join('');
 
+  const filesInManifest = new Set(manifest.files.map(f => f.name));
   const extra = [
-    hasSig ? '<tr><td class="fn">manifest.sig</td><td class="fr">signature</td>' +
-              '<td class="ck"><span class="na-">présent — vérifiable via verify.sh</span></td></tr>' : '',
-    hasTsr ? '<tr><td class="fn">manifest.tsr</td><td class="fr">timestamp</td>' +
-              '<td class="ck"><span class="na-">présent — vérifiable via verify.sh</span></td></tr>' : '',
+    hasSig && !filesInManifest.has('manifest.sig')
+      ? '<tr><td class="fn">manifest.sig</td><td class="fr">signature</td>' +
+        '<td class="ck"><span class="na-">présent — vérifiable via verify.sh</span></td></tr>' : '',
+    hasTsr && !filesInManifest.has('manifest.tsr')
+      ? '<tr><td class="fn">manifest.tsr</td><td class="fr">timestamp</td>' +
+        '<td class="ck"><span class="na-">présent — vérifiable via verify.sh</span></td></tr>' : '',
   ].join('');
 
   // Intent block

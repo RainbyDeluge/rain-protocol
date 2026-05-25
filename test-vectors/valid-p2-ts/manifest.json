@@ -12,8 +12,8 @@
     },
     {
       "name": "intent.json",
-      "sha256": "ff47a07808cf43ed19fbde2c1c9a809d0fd220dfe052ad99a79a2d318f16376b",
-      "sha3_256": "5c3ddd0eafd85b7e955ccbfae91ec0368aa197ab00f714d82a695747a42b6a1c",
+      "sha256": "207530581923d0cef9675e69fc79544b22192e9b34cf0b414e3573204856f786",
+      "sha3_256": "ed9d96ebf2e94fa03f0e766e738727d55b9539cbe8b667df2514f85fb6e18e45",
       "role": "intent"
     },
     {
@@ -30,8 +30,8 @@
     },
     {
       "name": "manifest.tsr",
-      "sha256": "b7ea93cf4f41968efa7cca8b6678b9661114f213141368727deb56c6e456938e",
-      "sha3_256": "5702ae2ead4eab878a44f21c406d2b3233054f9f4abe0e12fbbff93a41c06490",
+      "sha256": "d1986f2106a055b6d767599d9a8e26986b26f7af66d4a3768a47f8033119b0c3",
+      "sha3_256": "31f69f42763a981ec5862bcc4db3f2d332edf129162620cb1e0b2d0d5d53e24e",
       "role": "timestamp"
     }
   ],
