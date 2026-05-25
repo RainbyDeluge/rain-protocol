@@ -221,9 +221,17 @@ input[type=file] { display: none; }
 .fn { color: var(--tx2); }
 .fr { color: var(--tx0); font-size: 11px; }
 .ck { white-space: nowrap; letter-spacing: .05em; }
-.ok- { color: var(--gr); }
-.bad- { color: var(--rd); }
-.na- { color: var(--tx0); }
+.ok-   { color: var(--gr); }
+.bad-  { color: var(--rd); }
+.warn- { color: var(--gd); }
+.na-   { color: var(--tx0); }
+
+/* inline code references inside table cells */
+.ft td code {
+  font-family: var(--f); font-size: 11px;
+  color: var(--cy); background: rgba(0,229,255,.06);
+  padding: 1px 4px;
+}
 
 /* notice */
 .note {
@@ -252,7 +260,7 @@ footer {
 
 <header>
   <div class="logo">RAIN <span class="s">//</span> <span class="v">VERIFY</span></div>
-  <div class="ver">v0.1.0</div>
+  <div class="ver">v0.1.1</div>
   <div class="tag">Responsible AI Notation — vérification côté navigateur — aucune donnée ne quitte votre appareil</div>
 </header>
 
@@ -267,10 +275,12 @@ footer {
 <div class="res" id="res"></div>
 
 <div class="note">
-  <b>Périmètre v0 :</b> cette page vérifie l'intégrité des fichiers (SHA-256 + SHA3-256).
-  La vérification de la <b>signature Ed25519</b> et du <b>timestamp RFC 3161</b>
-  nécessite le CLI — exécutez <code>bash scripts/verify.sh &lt;bundle-dir&gt;</code>
-  pour un contrôle cryptographique complet.
+  <b>Périmètre navigateur v0.1.1 :</b>
+  intégrité SHA-256+SHA3-256 <b style="color:var(--gr)">✓</b> —
+  signature Ed25519 <b style="color:var(--gr)">✓</b> (Chrome 113+, Firefox 118+, Safari 17+) —
+  chaîne de certification <b style="color:var(--gd)">⚠</b> —
+  timestamp RFC 3161 <b style="color:var(--gd)">⚠</b> —
+  contrôle complet CA + TSR : <code>bash scripts/verify.sh &lt;bundle-dir&gt;</code>
 </div>
 
 <footer>
@@ -335,6 +345,85 @@ async function sha256hex(buf) {
 function sha3hex(buf) {
   if (typeof sha3_256 === 'undefined') throw new Error('js-sha3 non chargé (connexion internet requise)');
   return sha3_256(new Uint8Array(buf));
+}
+
+// ── PEM / ASN.1 helpers ───────────────────────────────────────────────────────
+
+// Strip PEM armor and base64-decode to a Uint8Array (the DER bytes).
+function pemToDer(pem) {
+  const b64 = pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// Extract the SubjectPublicKeyInfo SEQUENCE for an Ed25519 key from DER certificate bytes.
+//
+// Ed25519 OID 1.3.101.112 encodes as: 06 03 2b 65 70
+// The SPKI SEQUENCE always has the OID at offset +4:
+//   30 <len>        — SPKI SEQUENCE
+//   30 05           — AlgorithmIdentifier SEQUENCE
+//   06 03 2b 65 70  — OID id-Ed25519  (offset +4 from SPKI start)
+//   03 21 00        — BIT STRING, 1 unused-bits byte + 32-byte key
+function extractEd25519Spki(der) {
+  for (let i = 0; i <= der.length - 5; i++) {
+    if (der[i]===0x06 && der[i+1]===0x03 && der[i+2]===0x2b && der[i+3]===0x65 && der[i+4]===0x70) {
+      const off = i - 4;
+      if (off < 0 || der[off] !== 0x30) continue;
+      const len = der[off + 1];
+      if (len >= 0x80) continue; // Ed25519 SPKI (44 bytes total) never needs long form
+      return der.slice(off, off + 2 + len);
+    }
+  }
+  throw new Error('Clé publique Ed25519 introuvable dans le certificat (OID 1.3.101.112 absent)');
+}
+
+// ── Signature verifier ────────────────────────────────────────────────────────
+
+async function verifyCrypto(map, manifest) {
+  const r = {
+    sigStatus:    'pending',
+    fpStatus:     null,
+    fpDeclared:   manifest.signer_cert_fingerprint || null,
+    fpActual:     null,
+    anchorDigest: manifest.timestamp_anchor_sha256 || null,
+    hasTsr:       !!(map['manifest.tsr'] ||
+                     (manifest.files || []).some(f => f.role === 'timestamp')),
+    error:        null,
+  };
+
+  try {
+    const certDer = pemToDer(new TextDecoder().decode(map['signer-cert.pem']));
+
+    // Fingerprint: SHA-256 of DER-encoded certificate (matches openssl x509 -fingerprint -sha256)
+    r.fpActual = await sha256hex(certDer);
+    r.fpStatus = r.fpDeclared
+      ? (r.fpActual === r.fpDeclared ? 'match' : 'mismatch')
+      : 'absent';
+
+    // Extract SubjectPublicKeyInfo, import as Ed25519 key
+    const spki   = extractEd25519Spki(certDer);
+    const pubKey = await crypto.subtle.importKey(
+      'spki', spki, { name: 'Ed25519' }, false, ['verify']
+    );
+
+    // Verify detached signature over the exact manifest.json bytes
+    const ok = await crypto.subtle.verify(
+      { name: 'Ed25519' }, pubKey,
+      map['manifest.sig'],
+      map['manifest.json']
+    );
+    r.sigStatus = ok ? 'verified' : 'invalid';
+
+  } catch (e) {
+    r.sigStatus = 'error';
+    r.error = (e instanceof DOMException && e.name === 'NotSupportedError')
+      ? 'Ed25519 non supporté par ce navigateur — Chrome 113+, Firefox 118+, Safari 17+ requis'
+      : e.message;
+  }
+
+  return r;
 }
 
 // ── FileSystem API helpers ────────────────────────────────────────────────────
@@ -442,18 +531,19 @@ async function verify(map, sourceName) {
 
   let intent = null;
   if (map['intent.json']) {
-    try { intent = JSON.parse(new TextDecoder().decode(map['intent.json'])); } catch (e) {}
+    try { intent = JSON.parse(new TextDecoder().decode(map['intent.json'])); } catch {}
   }
 
+  // ── Step 1: Hash verification ──────────────────────────────────────────────
   const results = [];
-  let allOk = true;
+  let hashOk = true;
 
   for (const entry of manifest.files) {
-    setStatus('Vérification : ' + entry.name + '…', 'proc');
+    setStatus('Intégrité : ' + entry.name + '…', 'proc');
     const buf = map[entry.name];
     if (!buf) {
       results.push({ name: entry.name, role: entry.role, missing: true });
-      allOk = false;
+      hashOk = false;
       continue;
     }
     let s256, s3;
@@ -464,14 +554,51 @@ async function verify(map, sourceName) {
     }
     const s256ok = entry.sha256   != null ? s256 === entry.sha256   : null;
     const s3ok   = entry.sha3_256 != null ? s3   === entry.sha3_256 : null;
-    if (s256ok === false || s3ok === false) allOk = false;
+    if (s256ok === false || s3ok === false) hashOk = false;
     results.push({ name: entry.name, role: entry.role, s256ok, s3ok });
   }
 
+  // ── Step 2: Cryptographic verification ────────────────────────────────────
+  const pl          = (manifest.proof_level || 'P1').toUpperCase();
+  const hasSigFile  = !!map['manifest.sig'];
+  const hasCertFile = !!map['signer-cert.pem'];
+  const hasTsrFile  = !!map['manifest.tsr'];
+
+  let cryptoResult = null;
+
+  if (pl === 'P2' || pl === 'P3') {
+    if (hasSigFile && hasCertFile) {
+      setStatus('Vérification signature Ed25519…', 'proc');
+      cryptoResult = await verifyCrypto(map, manifest);
+    } else {
+      cryptoResult = {
+        sigStatus:    'absent',
+        fpStatus:     null,
+        fpDeclared:   manifest.signer_cert_fingerprint || null,
+        fpActual:     null,
+        anchorDigest: manifest.timestamp_anchor_sha256 || null,
+        hasTsr:       hasTsrFile,
+        error:        null,
+      };
+    }
+  } else {
+    // P1 — no signature required; still surface timestamp anchor if present
+    cryptoResult = {
+      sigStatus:    'na',
+      fpStatus:     null,
+      fpDeclared:   null,
+      fpActual:     null,
+      anchorDigest: manifest.timestamp_anchor_sha256 || null,
+      hasTsr:       hasTsrFile,
+      error:        null,
+    };
+  }
+
+  const sigInvalid = cryptoResult.sigStatus === 'invalid';
+  const overallOk  = hashOk && !sigInvalid;
+
   setStatus('Vérification terminée.', '');
-  render({ sourceName, manifest, intent, results, allOk,
-           hasSig: !!map['manifest.sig'],
-           hasTsr: !!map['manifest.tsr'] });
+  render({ sourceName, manifest, intent, results, hashOk, overallOk, cryptoResult });
 }
 
 // ── Renderer ──────────────────────────────────────────────────────────────────
@@ -481,16 +608,27 @@ function esc(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function render({ sourceName, manifest, intent, results, allOk, hasSig, hasTsr }) {
+function render({ sourceName, manifest, intent, results, hashOk, overallOk, cryptoResult }) {
   const pl      = (manifest.proof_level || 'P1').toUpperCase();
   const plClass = pl === 'P2' ? 'p2' : 'p1';
-  const vClass  = allOk ? 'ok' : 'bad';
-  const vText   = allOk ? 'VALID' : 'INVALID';
-  const vSub    = allOk
-    ? results.length + ' fichier' + (results.length > 1 ? 's' : '') + ' — intégrité des hachages confirmée'
-    : 'Divergence détectée — données altérées ou corrompues';
+  const vClass  = overallOk ? 'ok' : 'bad';
+  const vText   = overallOk ? 'VALID' : 'INVALID';
 
-  // File rows
+  // Verdict subtitle
+  let vSub;
+  if (!hashOk) {
+    vSub = 'Divergence détectée — données altérées ou corrompues';
+  } else if (cryptoResult && cryptoResult.sigStatus === 'invalid') {
+    vSub = 'Signature Ed25519 invalide — manifest altéré ou clé incorrecte';
+  } else if (cryptoResult && cryptoResult.sigStatus === 'verified') {
+    vSub = results.length + ' fichier' + (results.length > 1 ? 's' : '') +
+           ' · intégrité + signature Ed25519 vérifiées';
+  } else {
+    vSub = results.length + ' fichier' + (results.length > 1 ? 's' : '') +
+           ' · intégrité SHA-256+SHA3 vérifiée';
+  }
+
+  // File integrity rows
   const rows = results.map(r => {
     const n = esc(r.name), role = esc(r.role || '—');
     if (r.missing) {
@@ -505,35 +643,26 @@ function render({ sourceName, manifest, intent, results, allOk, hasSig, hasTsr }
            '<td class="ck">' + c256 + '&thinsp;SHA-256&ensp;' + c3 + '&thinsp;SHA3-256</td></tr>';
   }).join('');
 
-  const filesInManifest = new Set(manifest.files.map(f => f.name));
-  const extra = [
-    hasSig && !filesInManifest.has('manifest.sig')
-      ? '<tr><td class="fn">manifest.sig</td><td class="fr">signature</td>' +
-        '<td class="ck"><span class="na-">présent — vérifiable via verify.sh</span></td></tr>' : '',
-    hasTsr && !filesInManifest.has('manifest.tsr')
-      ? '<tr><td class="fn">manifest.tsr</td><td class="fr">timestamp</td>' +
-        '<td class="ck"><span class="na-">présent — vérifiable via verify.sh</span></td></tr>' : '',
-  ].join('');
-
   // Intent block
   let intentHtml = '';
   if (intent) {
     const purpose = esc(intent.purpose || '');
     const tags = [
-      intent.human_role      && '<span class="itag">' + esc(intent.human_role) + '</span>',
-      intent.intent_timing   && '<span class="itag">' + esc(intent.intent_timing) + '</span>',
+      intent.human_role       && '<span class="itag">' + esc(intent.human_role) + '</span>',
+      intent.intent_timing    && '<span class="itag">' + esc(intent.intent_timing) + '</span>',
       intent.disclosure_scope && '<span class="itag">' + esc(intent.disclosure_scope) + '</span>',
       ...(Array.isArray(intent.ai_tools_used)
         ? intent.ai_tools_used.map(t => '<span class="itag ai">' + esc(t) + '</span>')
         : []),
     ].filter(Boolean).join('');
-    intentHtml = '<div class="sec">' +
-      '<div class="sec-hd">Intent déclarée</div>' +
-      '<div class="ib">' +
-        (purpose ? '<div class="purpose">&ldquo;' + purpose + '&rdquo;</div>' : '') +
-        (tags || '') +
-      '</div>' +
-    '</div>';
+    intentHtml =
+      '<div class="sec">' +
+        '<div class="sec-hd">Intent déclarée</div>' +
+        '<div class="ib">' +
+          (purpose ? '<div class="purpose">&ldquo;' + purpose + '&rdquo;</div>' : '') +
+          (tags || '') +
+        '</div>' +
+      '</div>';
   }
 
   res.innerHTML =
@@ -546,11 +675,11 @@ function render({ sourceName, manifest, intent, results, allOk, hasSig, hasTsr }
     '<div class="sec">' +
       '<div class="sec-hd">Métadonnées</div>' +
       '<div class="mg-grid">' +
-        '<span class="mk">source</span>        <span class="mv">' + esc(sourceName) + '</span>' +
-        '<span class="mk">bundle_id</span>     <span class="mv">' + esc(manifest.bundle_id || '—') + '</span>' +
-        '<span class="mk">created_at</span>    <span class="mv">' + esc(manifest.created_at || '—') + '</span>' +
-        '<span class="mk">rain_version</span>  <span class="mv">' + esc(manifest.rain_version || '—') + '</span>' +
-        '<span class="mk">proof_level</span>   <span class="mv">' + esc(pl) + '</span>' +
+        '<span class="mk">source</span>       <span class="mv">' + esc(sourceName) + '</span>' +
+        '<span class="mk">bundle_id</span>    <span class="mv">' + esc(manifest.bundle_id || '—') + '</span>' +
+        '<span class="mk">created_at</span>   <span class="mv">' + esc(manifest.created_at || '—') + '</span>' +
+        '<span class="mk">rain_version</span> <span class="mv">' + esc(manifest.rain_version || '—') + '</span>' +
+        '<span class="mk">proof_level</span>  <span class="mv">' + esc(pl) + '</span>' +
       '</div>' +
     '</div>' +
 
@@ -561,11 +690,113 @@ function render({ sourceName, manifest, intent, results, allOk, hasSig, hasTsr }
         ' entr' + (results.length > 1 ? 'ées' : 'ée') + ')</div>' +
       '<table class="ft">' +
         '<thead><tr><th>Fichier</th><th>Rôle</th><th>Vérification</th></tr></thead>' +
-        '<tbody>' + rows + extra + '</tbody>' +
+        '<tbody>' + rows + '</tbody>' +
       '</table>' +
-    '</div>';
+    '</div>' +
+
+    renderCryptoSection(cryptoResult, pl);
 
   res.classList.add('on');
+}
+
+// ── Crypto section renderer ────────────────────────────────────────────────────
+
+function renderCryptoSection(cr, pl) {
+  if (!cr) return '';
+
+  const rows = [];
+
+  // ── Signature Ed25519 ──────────────────────────────────────────────────────
+  if (pl === 'P2' || pl === 'P3') {
+    let sigCell;
+    switch (cr.sigStatus) {
+      case 'verified':
+        sigCell = '<span class="ok-">✓ vérifiée</span>';
+        break;
+      case 'invalid':
+        sigCell = '<span class="bad-">✗ INVALIDE — manifest altéré ou clé incorrecte</span>';
+        break;
+      case 'absent':
+        sigCell = '<span class="warn-">⚠ manifest.sig ou signer-cert.pem absent du bundle</span>';
+        break;
+      case 'error':
+        sigCell = '<span class="warn-">⚠ ' + esc(cr.error || 'erreur inconnue') + '</span>';
+        break;
+      default:
+        sigCell = '<span class="na-">—</span>';
+    }
+    rows.push(
+      '<tr><td class="fn">Signature Ed25519</td>' +
+      '<td class="ck">' + sigCell + '</td></tr>'
+    );
+
+    // ── Certificate fingerprint ────────────────────────────────────────────
+    if (cr.fpStatus !== null) {
+      let fpCell;
+      if (cr.fpStatus === 'match') {
+        const fp = (cr.fpActual || '').slice(0, 16) + '…';
+        fpCell = '<span class="ok-">✓ ' + esc(fp) + ' — correspond au manifest</span>';
+      } else if (cr.fpStatus === 'mismatch') {
+        fpCell = '<span class="bad-">✗ empreinte diverge du manifest</span>';
+      } else {
+        fpCell = '<span class="warn-">⚠ signer_cert_fingerprint absent du manifest</span>';
+      }
+      rows.push(
+        '<tr><td class="fn">Empreinte certificat (SHA-256)</td>' +
+        '<td class="ck">' + fpCell + '</td></tr>'
+      );
+    }
+
+    // ── CA chain — honest scope boundary ──────────────────────────────────
+    rows.push(
+      '<tr><td class="fn">Chaîne de certification (CA)</td>' +
+      '<td class="ck">' +
+        '<span class="warn-">⚠ non vérifiée en navigateur</span>' +
+        '<span class="na-"> — vérification complète : <code>verify.sh</code></span>' +
+      '</td></tr>'
+    );
+
+  } else {
+    // P1 — signature not expected
+    rows.push(
+      '<tr><td class="fn">Signature Ed25519</td>' +
+      '<td class="ck"><span class="na-">— non applicable (P1)</span></td></tr>'
+    );
+  }
+
+  // ── RFC 3161 timestamp — honest scope boundary ─────────────────────────────
+  if (cr.hasTsr) {
+    const anchor = cr.anchorDigest;
+    let tsCell;
+    if (anchor) {
+      // timestamp_anchor_sha256 comes from the signed manifest (SSOT); display the anchor.
+      tsCell =
+        '<span class="warn-">⚠ présent · ancre : <code>' + esc(anchor.slice(0, 16)) + '…</code></span>' +
+        '<span class="na-"> — vérification cryptographique complète : <code>verify.sh</code></span>';
+    } else {
+      tsCell =
+        '<span class="warn-">⚠ présent · <code>timestamp_anchor_sha256</code> absent du manifest signé</span>';
+    }
+    rows.push(
+      '<tr><td class="fn">Horodatage RFC 3161</td>' +
+      '<td class="ck">' + tsCell + '</td></tr>'
+    );
+  } else {
+    rows.push(
+      '<tr><td class="fn">Horodatage RFC 3161</td>' +
+      '<td class="ck"><span class="na-">— absent</span></td></tr>'
+    );
+  }
+
+  return (
+    '<div class="sec">' +
+      '<div class="sec-hd">Vérification cryptographique</div>' +
+      '<table class="ft">' +
+        '<thead><tr><th>Contrôle</th><th>Résultat</th></tr></thead>' +
+        '<tbody>' + rows.join('') + '</tbody>' +
+      '</table>' +
+    '</div>'
+  );
 }
 </script>
 </body>
