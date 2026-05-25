@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# RAIN Evidence Bundle Verifier v0.1.0
-# Usage: verify.sh [--json] <bundle-dir>
+# RAIN Evidence Bundle Verifier v0.1.1
+# Usage: verify.sh [--json] <bundle-dir|bundle.zip>
 # Exit codes: 0=VALID  1=INVALID  2=DOWNGRADE
 
 set -uo pipefail
@@ -23,16 +23,39 @@ for arg in "$@"; do
 done
 
 if [[ -z "$BUNDLE_DIR" ]]; then
-    printf 'Usage: %s [--json] <bundle-dir>\n' "$(basename "$0")" >&2
+    printf 'Usage: %s [--json] <bundle-dir|bundle.zip>\n' "$(basename "$0")" >&2
     exit 1
 fi
 
-if [[ ! -d "$BUNDLE_DIR" ]]; then
-    printf 'Error: directory not found: %s\n' "$BUNDLE_DIR" >&2
+# ── Resolve input: directory or .zip ─────────────────────────────────────────
+if [[ "$BUNDLE_DIR" == *.zip ]]; then
+    # ZIP input: extract to a temp dir, clean up unconditionally on exit.
+    if [[ ! -f "$BUNDLE_DIR" ]]; then
+        printf 'Error: zip file not found: %s\n' "$BUNDLE_DIR" >&2
+        exit 1
+    fi
+    _ZIP_ABS="$(cd "$(dirname "$BUNDLE_DIR")" && pwd)/$(basename "$BUNDLE_DIR")"
+    _TMP_EXTRACT="$(mktemp -d)"
+    trap 'rm -rf "$_TMP_EXTRACT"' EXIT
+    [[ "$JSON_MODE" == false ]] && printf '[zip] Extracting %s…\n' "$(basename "$_ZIP_ABS")"
+    python3 - "$_ZIP_ABS" "$_TMP_EXTRACT" <<'PY'
+import zipfile, sys
+zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+PY
+    # Handle flat zips (files at root) and single-subdir zips.
+    if [[ -f "$_TMP_EXTRACT/bundle-index.json" ]]; then
+        BUNDLE_DIR="$_TMP_EXTRACT"
+    else
+        _idx="$(find "$_TMP_EXTRACT" -maxdepth 2 -name 'bundle-index.json' 2>/dev/null | head -1)"
+        BUNDLE_DIR="${_idx:+$(dirname "$_idx")}"
+        BUNDLE_DIR="${BUNDLE_DIR:-$_TMP_EXTRACT}"
+    fi
+elif [[ -d "$BUNDLE_DIR" ]]; then
+    BUNDLE_DIR="$(cd "$BUNDLE_DIR" && pwd)"
+else
+    printf 'Error: not found (expected a directory or a .zip file): %s\n' "$BUNDLE_DIR" >&2
     exit 1
 fi
-
-BUNDLE_DIR="$(cd "$BUNDLE_DIR" && pwd)"
 
 # ── State ─────────────────────────────────────────────────────────────────────
 

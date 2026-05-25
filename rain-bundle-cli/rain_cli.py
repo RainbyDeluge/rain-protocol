@@ -12,7 +12,7 @@ from pathlib import Path
 # Make the rain package importable when running from any directory.
 sys.path.insert(0, str(Path(__file__).parent))
 
-from rain.builder import create_bundle
+from rain.builder import create_bundle, zip_bundle
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -56,6 +56,8 @@ def main() -> None:
                    help="Proof level: P1=declarative, P2=signed (default: P1)")
     p.add_argument("--no-timestamp", action="store_true", dest="no_timestamp",
                    help="Skip RFC 3161 timestamping when using --level P2")
+    p.add_argument("--zip", action="store_true",
+                   help="After building, produce RAIN-<bundle_id>.zip alongside the output directory")
 
     args = parser.parse_args()
 
@@ -105,6 +107,11 @@ def main() -> None:
     print()
     if rc == 0:
         print(f"Bundle ready: {output}")
+        if args.zip:
+            import json as _json
+            bundle_id = _json.loads((output / "manifest.json").read_text()).get("bundle_id", "bundle")
+            zip_path = zip_bundle(output, bundle_id)
+            print(f"  zip      : {zip_path}")
     else:
         print(f"Bundle created but verify.sh returned exit {rc}.", file=sys.stderr)
     sys.exit(rc)

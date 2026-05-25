@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,6 +56,20 @@ def _run_script(script: Path, bundle_dir: Path, label: str) -> None:
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
+
+def zip_bundle(output_dir: Path, bundle_id: str) -> Path:
+    """Pack all files in output_dir into a flat RAIN-<bundle_id>.zip placed alongside it.
+
+    Files are stored without a parent directory so that the zip root matches the
+    bundle directory root — verify.sh can extract and verify without path adjustment.
+    """
+    zip_path = output_dir.parent / f"RAIN-{bundle_id}.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(output_dir.iterdir()):
+            if f.is_file():
+                zf.write(f, f.name)  # arcname = basename only → flat layout
+    return zip_path
+
 
 def create_bundle(
     *,
