@@ -12,13 +12,18 @@
 #   impossible against the current file.
 #
 #   Instead we use -digest: we compute SHA-256 of the manifest *before* any
-#   modification, pass that hex digest directly to openssl ts -query, and store
-#   the digest in bundle-index.json as timestamp_data_sha256.  Adding the TSR
-#   entry to files[] then modifying manifest.json is safe — the TSR seals the
-#   pre-modification hash, not the file path.
+#   modification ("anchor digest"), pass that hex digest directly to openssl
+#   ts -query, and embed the anchor digest into manifest.json itself as
+#   timestamp_anchor_sha256 — the Single Source of Truth for timestamp verification.
+#
+#   SSOT principle: every piece of information required for verification must
+#   live either in the signed object (manifest.json) or in an explicitly
+#   verified external authority (TSA).  The anchor digest is attested by the
+#   TSA token AND sealed by the Ed25519 signature that follows — it is never
+#   stored in the unsigned bundle-index.json.
 #
 #   Verification later:
-#     DIGEST=$(jq -r .timestamp_data_sha256 bundle-index.json)
+#     DIGEST=$(jq -r .timestamp_anchor_sha256 manifest.json)
 #     openssl ts -verify -digest $DIGEST -sha256 -in manifest.tsr -CAfile …
 
 set -euo pipefail
@@ -89,8 +94,10 @@ TSQ_FILE="${BUNDLE_DIR}/manifest.tsq"
 TSR_FILE="${BUNDLE_DIR}/manifest.tsr"
 
 # ── Step 2: Hash manifest (pre-modification) and create TSQ ──────────────────
-# The TSA seals this hash, not the file path.  We store it so verifiers can
-# reproduce the exact input to openssl ts -verify without needing a pre-TSR copy.
+# This hash is the "anchor digest" — the TSA seals it, and it will be embedded
+# into manifest.json as timestamp_anchor_sha256 (attested historical state,
+# non-recomputable from the final manifest, whose verity is guaranteed by the
+# TSA attestation and the Ed25519 signature that follows).
 
 echo "[2/5] Hashing manifest and creating timestamp request (TSQ)..."
 MANIFEST_HASH="$(python3 -c "
@@ -149,11 +156,17 @@ echo "  Token verified OK"
 TIMESTAMP_LINE="$(openssl ts -reply -in "${TSR_FILE}" -text 2>/dev/null | grep 'Time stamp' || true)"
 echo "  ${TIMESTAMP_LINE}"
 
-# ── Step 5: Add manifest.tsr to manifest files[] and record digest ────────────
-# manifest.json is modified here (TSR entry added).  The TSR is still verifiable
-# because it seals MANIFEST_HASH, not the post-modification file bytes.
+# ── Step 5: Add manifest.tsr to manifest files[] and embed anchor digest ──────
+# manifest.json is modified here: the TSR entry is added to files[] AND the
+# anchor digest is stored as timestamp_anchor_sha256 (top-level field).
+# The TSR is still verifiable because it seals MANIFEST_HASH (pre-modification).
+# timestamp_anchor_sha256 is attested historical data: it represents the state
+# of the manifest before the TSR entry was inserted, is non-recomputable from
+# the final manifest, and its verity is guaranteed by both the TSA attestation
+# and the Ed25519 signature that sign-bundle.sh applies next.
+# bundle-index.json is NOT modified — it carries no timestamp data.
 
-echo "[5/5] Adding manifest.tsr to manifest files[] and recording digest..."
+echo "[5/5] Adding manifest.tsr to manifest files[] and embedding anchor digest..."
 
 TSR_HASHES="$(python3 - "${TSR_FILE}" <<'PY'
 import hashlib, sys
@@ -164,40 +177,30 @@ PY
 TSR_SHA256="${TSR_HASHES%% *}"
 TSR_SHA3="${TSR_HASHES##* }"
 
-python3 - "${MANIFEST_FILE}" "${TSR_SHA256}" "${TSR_SHA3}" <<'PY'
+python3 - "${MANIFEST_FILE}" "${TSR_SHA256}" "${TSR_SHA3}" "${MANIFEST_HASH}" <<'PY'
 import json, sys
-manifest_path, tsr_sha256, tsr_sha3 = sys.argv[1:4]
+manifest_path, tsr_sha256, tsr_sha3, anchor_digest = sys.argv[1:5]
 with open(manifest_path) as f:
     manifest = json.load(f)
 manifest['files'] = [e for e in manifest.get('files', []) if e.get('role') != 'timestamp']
 manifest['files'].append({'name': 'manifest.tsr', 'sha256': tsr_sha256, 'sha3_256': tsr_sha3, 'role': 'timestamp'})
+manifest['timestamp_anchor_sha256'] = anchor_digest
 with open(manifest_path, 'w') as f:
     json.dump(manifest, f, indent=2, ensure_ascii=False)
     f.write('\n')
 print(f"  manifest.tsr added to files[] (role=timestamp)")
+print(f"  timestamp_anchor_sha256 embedded in manifest")
 print(f"  files[] count: {len(manifest['files'])}")
-PY
-
-# Store the pre-TSR manifest hash in bundle-index.json for later timestamp verification.
-python3 - "${INDEX_FILE}" "${MANIFEST_HASH}" <<'PY'
-import json, sys
-index_path, manifest_hash = sys.argv[1:3]
-with open(index_path) as f:
-    index = json.load(f)
-index['timestamp_data_sha256'] = manifest_hash
-with open(index_path, 'w') as f:
-    json.dump(index, f, indent=2, ensure_ascii=False)
-    f.write('\n')
-print(f"  timestamp_data_sha256 stored in bundle-index.json")
 PY
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 printf '\nBundle timestamped: %s\n' "${BUNDLE_DIR}"
-printf '  manifest.tsr — RFC 3161 token in manifest files[] (role=timestamp)\n'
-printf '  bundle-index.json — timestamp_data_sha256 recorded for verification\n'
+printf '  manifest.tsr           — RFC 3161 token in manifest files[] (role=timestamp)\n'
+printf '  manifest.json          — timestamp_anchor_sha256 embedded (SSOT for verification)\n'
+printf '  bundle-index.json      — unchanged (no timestamp data)\n'
 printf '\nTo verify the timestamp later:\n'
-printf '  DIGEST=%s\n' "${MANIFEST_HASH}"
+printf '  DIGEST=$(python3 -c "import json; print(json.load(open('"'"'manifest.json'"'"')).get('"'"'timestamp_anchor_sha256'"'"', '"'"''"'"'))")\n'
 printf '  openssl ts -verify -digest $DIGEST -sha256 \\\n'
 printf '    -in %s/manifest.tsr \\\n' "${BUNDLE_DIR}"
 printf '    -CAfile tsa/freetsa-cacert.pem -untrusted tsa/freetsa-tsa.crt\n'

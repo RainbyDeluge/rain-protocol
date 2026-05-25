@@ -88,6 +88,11 @@
       "type": "string",
       "description": "Empreinte hexadécimale du certificat signataire (SHA-256 du DER encodé, 64 caractères). Requis pour P2 (preuve cryptographique signée par le SDK RAIN) et P3 (attestation souveraine BYOK/HYOK). Optionnel pour P1.",
       "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestamp_anchor_sha256": {
+      "type": "string",
+      "description": "Digest d'ancrage du timestamp RFC 3161 : SHA-256 hexadécimal du manifest dans son état P2-ready AVANT l'insertion de l'entrée manifest.tsr dans files[]. Ce champ est une donnée historique attestée — non recalculable depuis le manifest final — dont la véracité est garantie conjointement par l'attestation TSA (qui scelle exactement ce digest) et par la signature Ed25519 qui couvre l'intégralité du manifest incluant ce champ. Source unique de vérité (SSOT) pour la vérification du timestamp ; absent sur les bundles sans horodatage qualifié.",
+      "pattern": "^[0-9a-f]{64}$"
     }
   },
   "additionalProperties": false,

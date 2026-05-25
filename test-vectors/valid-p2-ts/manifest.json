@@ -30,10 +30,11 @@
     },
     {
       "name": "manifest.tsr",
-      "sha256": "d1986f2106a055b6d767599d9a8e26986b26f7af66d4a3768a47f8033119b0c3",
-      "sha3_256": "31f69f42763a981ec5862bcc4db3f2d332edf129162620cb1e0b2d0d5d53e24e",
+      "sha256": "9edfe14aedd8a28e1d766ac32b3ef142a6e77d7bc6b62611716e4bd8991d0bd3",
+      "sha3_256": "d13e3720e743dd3715aaafab05a9c471647f4eaedd49cd855ad310521fb74b6d",
       "role": "timestamp"
     }
   ],
-  "signer_cert_fingerprint": "def3183d0ffaec776eb856eba0e5148d9930743f63d38a15028a7cf68940555f"
+  "signer_cert_fingerprint": "def3183d0ffaec776eb856eba0e5148d9930743f63d38a15028a7cf68940555f",
+  "timestamp_anchor_sha256": "e53f8d02823fefc710e33cfba318abc961a0b0e6050ca44d9fa22493dc880d89"
 }

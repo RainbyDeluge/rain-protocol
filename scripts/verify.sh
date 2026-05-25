@@ -408,15 +408,21 @@ if [[ "$STEP1_PASS" == true ]]; then
         else
             _ok "${_TSR_NAME} found"
 
-            # 2. Reference digest (stored by timestamp-bundle.sh in bundle-index.json).
+            # 2. Anchor digest — read exclusively from the signed manifest (SSOT).
+            #    SSOT principle: any information required for verification must live in
+            #    the signed object (manifest.json) or an explicitly verified external
+            #    authority (TSA), never in unsigned state like bundle-index.json.
+            #    The Ed25519 signature verified in STEP 4 covers the full manifest
+            #    including timestamp_anchor_sha256, so reading it from the manifest
+            #    is equivalent to reading a signed claim.
             _TS_DIGEST=""
-            _TS_DIGEST="$(py_get_str "$INDEX_FILE" "timestamp_data_sha256" 2>/dev/null)" || true
+            _TS_DIGEST="$(py_get_str "$MANIFEST_FILE" "timestamp_anchor_sha256" 2>/dev/null)" || true
 
             if [[ -z "$_TS_DIGEST" ]]; then
-                add_downgrade "TIMESTAMP_UNVERIFIABLE: no reference digest in bundle-index"
+                add_downgrade "TIMESTAMP_UNVERIFIABLE: no anchor digest in signed manifest"
                 TIMESTAMP_STATUS="unverifiable"
             else
-                _ok "Reference digest: ${_TS_DIGEST:0:16}…"
+                _ok "Anchor digest (from signed manifest): ${_TS_DIGEST:0:16}…"
 
                 # 3. TSA certificates — their absence is a warning, not a failure.
                 _TSA_CA="${REPO_ROOT}/tsa/freetsa-cacert.pem"
@@ -426,7 +432,7 @@ if [[ "$STEP1_PASS" == true ]]; then
                     _warn "TIMESTAMP_UNANCHORED: TSA certs unavailable, timestamp not verified"
                     TIMESTAMP_STATUS="unverifiable"
                 else
-                    # 4. Cryptographic verification against the stored pre-TSR digest.
+                    # 4. Cryptographic verification against the anchor digest from the manifest.
                     if openssl ts -verify \
                             -digest "${_TS_DIGEST}" \
                             -sha256 \
@@ -446,7 +452,7 @@ for line in sys.stdin:
 " || true)"
                         [[ -n "$TIMESTAMP_DATE" ]] && _ok "Timestamp date: ${TIMESTAMP_DATE}"
                     else
-                        add_error "TIMESTAMP_INVALID: token does not verify against reference digest"
+                        add_error "TIMESTAMP_INVALID: token does not verify against anchor digest"
                         TIMESTAMP_STATUS="invalid"
                     fi
                 fi

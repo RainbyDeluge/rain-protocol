@@ -1,6 +1,5 @@
 {
   "manifest_ref": "manifest.json",
   "intent_ref": "intent.json",
-  "policy_ref": "policy.json",
-  "timestamp_data_sha256": "e53f8d02823fefc710e33cfba318abc961a0b0e6050ca44d9fa22493dc880d89"
+  "policy_ref": "policy.json"
 }
