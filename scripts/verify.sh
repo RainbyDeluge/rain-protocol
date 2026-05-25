@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# RAIN Evidence Bundle Verifier v0.1.1
-# Usage: verify.sh [--json] <bundle-dir|bundle.zip>
+# RAIN Evidence Bundle Verifier v0.1.2
+# Usage: verify.sh [--json] [--c2pa <image>] <bundle-dir|bundle.zip>
 # Exit codes: 0=VALID  1=INVALID  2=DOWNGRADE
+#
+# C2PA bridge (option A): --c2pa <image> is strictly optional.  When provided,
+# the script reads the C2PA manifest embedded in <image>, extracts the
+# rain.bundle assertion, and cross-checks bundle_id + proof_level against the
+# verified RAIN manifest.  A mismatch triggers DOWNGRADE (C2PA_MISMATCH).
+# Bundles without a C2PA counterpart are verified exactly as before.
 
 set -uo pipefail
 
@@ -13,17 +19,36 @@ SCHEMAS_DIR="${REPO_ROOT}/schemas"
 
 JSON_MODE=false
 BUNDLE_DIR=""
+C2PA_IMAGE=""
 
-for arg in "$@"; do
-    case "$arg" in
-        --json) JSON_MODE=true ;;
-        -*)     printf 'Unknown option: %s\n' "$arg" >&2; exit 1 ;;
-        *)      BUNDLE_DIR="$arg" ;;
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --json)
+            JSON_MODE=true
+            shift
+            ;;
+        --c2pa)
+            shift
+            if [[ $# -eq 0 ]]; then
+                printf 'Error: --c2pa requires a path argument\n' >&2
+                exit 1
+            fi
+            C2PA_IMAGE="$1"
+            shift
+            ;;
+        -*)
+            printf 'Unknown option: %s\n' "$1" >&2
+            exit 1
+            ;;
+        *)
+            BUNDLE_DIR="$1"
+            shift
+            ;;
     esac
 done
 
 if [[ -z "$BUNDLE_DIR" ]]; then
-    printf 'Usage: %s [--json] <bundle-dir|bundle.zip>\n' "$(basename "$0")" >&2
+    printf 'Usage: %s [--json] [--c2pa <image>] <bundle-dir|bundle.zip>\n' "$(basename "$0")" >&2
     exit 1
 fi
 
@@ -485,6 +510,78 @@ for line in sys.stdin:
 
 else
     _info "skipped — structure check failed"
+fi
+
+# ── STEP 6: C2PA Bridge (optional) ───────────────────────────────────────────
+# Architecture option A — C2PA enveloppe le bundle:
+#   The C2PA-signed image is a separate deliverable.  Its rain.bundle assertion
+#   carries the bundle_id and proof_level of the RAIN bundle it was built from.
+#   This step verifies that the assertion matches the verified RAIN manifest.
+#   It only runs when --c2pa <image> is explicitly passed; the default path is
+#   entirely unchanged for bundles that have no C2PA counterpart.
+
+if [[ -n "$C2PA_IMAGE" ]]; then
+    _section "STEP 6 — C2PA Bridge"
+
+    if ! command -v c2patool &>/dev/null; then
+        _warn "c2patool absent — C2PA bridge check skipped (install: brew install c2patool)"
+    elif [[ ! -f "$C2PA_IMAGE" ]]; then
+        add_downgrade "C2PA_MISMATCH: image not found: ${C2PA_IMAGE}"
+    elif [[ -z "$MANIFEST_FILE" || ! -f "$MANIFEST_FILE" ]]; then
+        _warn "RAIN manifest unavailable — C2PA bridge check skipped"
+    else
+        _info "C2PA image: $(basename "$C2PA_IMAGE")"
+
+        _C2PA_TMP="$(mktemp /tmp/rain-c2pa-verify-XXXXXX.json)"
+        _c2pa_read_ok=false
+        c2patool "$C2PA_IMAGE" > "$_C2PA_TMP" 2>/dev/null && _c2pa_read_ok=true || true
+
+        if [[ "$_c2pa_read_ok" == false ]]; then
+            add_downgrade "C2PA_MISMATCH: c2patool could not read manifest from $(basename "$C2PA_IMAGE")"
+        else
+            # Extract bundle_id and proof_level from rain.bundle assertion
+            _C2PA_BRIDGE="$(python3 - "$_C2PA_TMP" <<'PYEOF'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+    for m in data.get('manifests', {}).values():
+        for a in m.get('assertions', []):
+            if a.get('label') == 'rain.bundle':
+                d = a['data']
+                print(d.get('bundle_id', ''), d.get('proof_level', ''))
+                sys.exit(0)
+except Exception:
+    pass
+sys.exit(1)
+PYEOF
+)"
+            _c2pa_parse_ok=$?
+
+            if (( _c2pa_parse_ok != 0 )) || [[ -z "$_C2PA_BRIDGE" ]]; then
+                add_downgrade "C2PA_MISMATCH: rain.bundle assertion absent from C2PA manifest"
+            else
+                _C2PA_BUNDLE_ID="${_C2PA_BRIDGE%% *}"
+                _C2PA_PROOF_LEVEL="${_C2PA_BRIDGE##* }"
+
+                _RAIN_BUNDLE_ID="$(py_get_str "$MANIFEST_FILE" "bundle_id" 2>/dev/null)" || _RAIN_BUNDLE_ID=""
+                _RAIN_PROOF_LEVEL="$(py_get_str "$MANIFEST_FILE" "proof_level" 2>/dev/null)" || _RAIN_PROOF_LEVEL=""
+
+                _bridge_ok=true
+                if [[ "$_C2PA_BUNDLE_ID" != "$_RAIN_BUNDLE_ID" ]]; then
+                    add_downgrade "C2PA_MISMATCH: bundle_id mismatch (C2PA: ${_C2PA_BUNDLE_ID}, RAIN: ${_RAIN_BUNDLE_ID})"
+                    _bridge_ok=false
+                fi
+                if [[ "$_C2PA_PROOF_LEVEL" != "$_RAIN_PROOF_LEVEL" ]]; then
+                    add_downgrade "C2PA_MISMATCH: proof_level mismatch (C2PA: ${_C2PA_PROOF_LEVEL}, RAIN: ${_RAIN_PROOF_LEVEL})"
+                    _bridge_ok=false
+                fi
+                if [[ "$_bridge_ok" == true ]]; then
+                    _ok "C2PA bridge: bundle_id et proof_level concordent"
+                fi
+            fi
+        fi
+        rm -f "$_C2PA_TMP"
+    fi
 fi
 
 # ── Effective level ────────────────────────────────────────────────────────────
