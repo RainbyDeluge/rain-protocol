@@ -1,0 +1,4 @@
+# Prompts de test pour une session créative — ville flottante
+# Chaque ligne est une itération de la session multi-tour.
+Décris en trois phrases une ville flottante suspendue au-dessus des nuages.
+Ajoute-lui un système politique original adapté à son isolement géographique.
