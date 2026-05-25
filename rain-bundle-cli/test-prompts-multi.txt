@@ -1,0 +1,4 @@
+# Prompts multi-fournisseur — ville flottante (3 itérations, 3 vrais providers)
+anthropic: Décris en deux phrases une ville flottante au-dessus des nuages.
+openai: Propose un système politique original adapté à son isolement.
+gemini: Décris en une phrase le drapeau de cette cité.

@@ -18,12 +18,12 @@
     },
     "provider": {
       "type": "string",
-      "description": "Nom du fournisseur de modèle IA (ex. 'Anthropic', 'OpenAI', 'Mistral', 'local'). Informatif ; non vérifié cryptographiquement sauf en attestation_class 'session-signed' ou 'live'.",
+      "description": "Fournisseur principal de la session (ex. 'anthropic', 'openai', 'gemini'). Pour les sessions multi-fournisseur, la valeur 'multi' indique que le provider effectif est spécifié par itération dans iterations[].provider. Informatif ; non vérifié cryptographiquement sauf en attestation_class 'session-signed' ou 'live'.",
       "minLength": 1
     },
     "model": {
       "type": "string",
-      "description": "Identifiant du modèle utilisé tel que retourné par l'API fournisseur (ex. 'claude-sonnet-4-6', 'gpt-4o-2024-08-06'). Informatif ; non vérifié cryptographiquement sauf en attestation_class 'session-signed' ou 'live'.",
+      "description": "Identifiant du modèle principal tel que retourné par l'API fournisseur (ex. 'claude-sonnet-4-6', 'gpt-4o-mini'). Absent pour les sessions multi-fournisseur (provider='multi') ; le modèle effectif est alors spécifié par itération dans iterations[].model. Informatif ; non vérifié cryptographiquement sauf en attestation_class 'session-signed' ou 'live'.",
       "minLength": 1
     },
     "source_class": {
@@ -60,7 +60,7 @@
           },
           "action": {
             "type": "string",
-            "description": "Type d'action réalisée lors de cette itération (ex. 'prompt', 'tool_call', 'tool_result', 'revision', 'rejection'). Vocabulaire libre mais cohérent au sein d'un bundle.",
+            "description": "Type d'action réalisée lors de cette itération (ex. 'generate', 'tool_call', 'revision', 'rejection'). Vocabulaire libre mais cohérent au sein d'un bundle.",
             "minLength": 1
           },
           "input_hash": {
@@ -77,6 +77,16 @@
             "type": "string",
             "description": "Horodatage ISO 8601 de cette itération.",
             "format": "date-time"
+          },
+          "provider": {
+            "type": "string",
+            "description": "Fournisseur utilisé pour cette itération (ex. 'anthropic', 'openai', 'gemini'). Présent uniquement dans les sessions multi-fournisseur (provider='multi' au niveau session) ; absent dans les sessions mono-fournisseur pour lesquelles le provider est déclaré au niveau session.",
+            "minLength": 1
+          },
+          "model": {
+            "type": "string",
+            "description": "Modèle réellement utilisé pour cette itération, tel que retourné par l'API. Présent uniquement dans les sessions multi-fournisseur ; absent dans les sessions mono-fournisseur pour lesquelles le modèle est déclaré au niveau session.",
+            "minLength": 1
           }
         },
         "additionalProperties": false
@@ -84,10 +94,10 @@
     },
     "session_hash": {
       "type": "string",
-      "description": "Hash canonique de l'ensemble de la session, calculé sur la concaténation ordonnée des input_hash et output_hash de toutes les itérations (SHA-256 ou SHA3-256 selon la politique). Encodé en hexadécimal minuscule (64 caractères). C'est ce champ qui est signé par le SDK en mode session-signed.",
+      "description": "Hash canonique de l'ensemble de la session, calculé sur la concaténation ordonnée des input_hash et output_hash de toutes les itérations (SHA-256 ou SHA3-256 selon la politique). Encodé en hexadécimal minuscule (64 caractères). C'est ce champ qui est signé par le SDK en mode session-signed. Invariant quel que soit le nombre de fournisseurs.",
       "pattern": "^[0-9a-f]{64}$"
     }
   },
   "additionalProperties": false,
-  "$comment": "draft-07 fallback: remplacer '$schema' par 'http://json-schema.org/draft-07/schema#'. Tous les mots-clés utilisés sont supportés depuis draft-07. Note sur la contrainte de confidentialité : ce schema ne peut pas encoder structurellement l'interdiction de stocker du texte en clair dans des champs non définis — elle est normative et relève de l'implémentation, pas de la validation syntaxique."
+  "$comment": "v0.1.1 — ajout de provider et model par itération (champs optionnels) pour le support multi-fournisseur. Rétrocompatible : les logs mono-fournisseur existants restent valides. Pour les sessions multi-fournisseur, provider='multi' au niveau session et provider/model présents dans chaque itération. draft-07 fallback : remplacer '$schema' par 'http://json-schema.org/draft-07/schema#'."
 }
