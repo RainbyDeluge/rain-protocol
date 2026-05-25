@@ -44,3 +44,30 @@ niveau déclaré. Exit code 2. N'est pas une erreur critique.
 La vérité, la légalité, l'originalité du contenu. RAIN produit un reçu
 vérifiable et des signaux. Il prouve qu'une méthodologie documentée existe,
 qu'elle est cohérente, et que toute incohérence est détectable.
+
+## Digest d'ancrage (timestamp_anchor_sha256)
+Empreinte SHA-256 du manifest dans son état P2-ready, calculée avant
+l'insertion de l'entrée du jeton d'horodatage. C'est une donnée historique
+attestée : elle décrit un état passé du manifest et n'est pas recalculable
+depuis le manifest final. Sa véracité repose sur deux attestations conjointes :
+le jeton TSA, qui scelle exactement ce digest à une date donnée, et la
+signature, qui couvre le manifest entier incluant ce champ. Le digest d'ancrage
+vit exclusivement dans le manifest signé ; il n'est jamais stocké dans un
+fichier non signé.
+
+## Invariant SSOT (Single Source of Truth)
+Toute information nécessaire à la vérification doit se trouver soit dans
+l'objet signé (le manifest), soit dans une autorité externe explicitement
+vérifiée (TSA, CA). Aucune donnée critique ne réside dans un état intermédiaire
+local non signé tel que bundle-index.json. Cet invariant garantit qu'aucune
+vérité parallèle non contrainte ne peut désynchroniser la preuve.
+
+## Nature de l'objet de preuve
+RAIN ne produit pas un objet entièrement auto-vérifiable par recalcul interne,
+et ne le prétend pas. Il produit un objet auto-contenu à ancrage externe : un
+conteneur qui porte son contenu, une assertion attestée sur son propre passé,
+et la fermeture cryptographique de l'ensemble. Le système ne repose pas sur la
+recomputation interne d'un état historique, mais sur l'attestation externe de
+cet état, dont la trace est intégrée dans un objet signé fermant toutes les
+dépendances. C'est le modèle de confiance standard des systèmes de
+notarisation, des journaux de transparence et des chaînes de blocs.
