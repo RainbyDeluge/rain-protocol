@@ -135,13 +135,15 @@ printf '  rain_version : %s\n' "${RAIN_VERSION}"
 
 # ── Step 3: Build certificate chain ──────────────────────────────────────────
 
-echo "[3/6] Building certificate chain (signer + RAIN CA)..."
+echo "[3/6] Certificate configuration..."
 TMPDIR_LOCAL="$(mktemp -d /tmp/rain-c2pa-XXXXXX)"
 trap 'rm -rf "${TMPDIR_LOCAL}"' EXIT
 
-CHAIN_PEM="${TMPDIR_LOCAL}/chain.pem"
-cat "${C2PA_CERT}" "${PKI_DIR}/ca-cert.pem" > "${CHAIN_PEM}"
-echo "  chain.pem : c2pa-signer-cert + ca-cert"
+# c2patool 0.26+ rejects a multi-cert PEM (leaf+CA) with "certificate chain in
+# incorrect order".  Pass the leaf cert only.  The RAIN CA is not in the CAI
+# global trust store in v0 anyway, so signingCredential.untrusted is expected.
+CHAIN_PEM="${C2PA_CERT}"
+echo "  cert : c2pa-bridge/c2pa-signer-cert.pem (leaf, c2patool 0.26+ format)"
 
 # ── Step 4: Generate resolved manifest definition ────────────────────────────
 
