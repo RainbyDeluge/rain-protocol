@@ -33,7 +33,7 @@
     },
     "attestation_class": {
       "type": "string",
-      "description": "Mode de scellement du log, indépendant de la source_class, contribue aussi au plafonnement du Proof Level. 'post-session' : hash calculé et signé après la fin de session (niveau de confiance standard). 'session-signed' : chaque itération est signée en temps réel pendant la session (niveau de confiance élevé, requis pour P2). 'live' : attestation produite en continu avec ancrage externe (niveau maximal, contribue à P3).",
+      "description": "Mode de scellement du log, indépendant de la source_class, contribue aussi au plafonnement du Proof Level. 'post-session' : hash calculé et signé après la fin de session (niveau de confiance standard). 'session-signed' : chaque itération est signée individuellement en temps réel pendant la session, chaînée à la précédente, avec ancrage TSA optionnel non bloquant (niveau de confiance élevé). 'live' : attestation produite en continu avec ancrage externe (niveau maximal, contribue à P3).",
       "enum": ["post-session", "session-signed", "live"]
     },
     "started_at": {
@@ -87,7 +87,40 @@
             "type": "string",
             "description": "Modèle réellement utilisé pour cette itération, tel que retourné par l'API. Présent uniquement dans les sessions multi-fournisseur ; absent dans les sessions mono-fournisseur pour lesquelles le modèle est déclaré au niveau session.",
             "minLength": 1
+          },
+          "local_time": {
+            "type": "string",
+            "description": "Horodatage déclaratif de la machine (NON prouvé). Enregistre l'heure locale au moment de l'itération, telle que rapportée par l'horloge système. NE constitue PAS une preuve de chronologie : un système mal réglé ou malveillant peut falsifier cette valeur. Champ de traçabilité pratique uniquement. La preuve externe repose sur ts_token (tsa_status='anchored'). Présent uniquement en attestation_class 'session-signed'.",
+            "format": "date-time"
+          },
+          "prev_sig_hash": {
+            "type": "string",
+            "description": "Hash SHA-256 (hexadécimal minuscule, 64 caractères) de la valeur sig de l'itération précédente. Forme la chaîne d'intégrité : chaque itération enchaîne la signature de la précédente, garantissant qu'aucune itération ne peut être réordonnée, insérée ou supprimée sans invalider la chaîne. Valeur de genèse pour seq=1 : 64 zéros ('0000000000000000000000000000000000000000000000000000000000000000'). Présent uniquement en attestation_class 'session-signed'.",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "sig": {
+            "type": "string",
+            "description": "Signature Ed25519 de cette itération, encodée en base64 standard (RFC 4648). Couvre au minimum : input_hash || output_hash || prev_sig_hash (le message signé exact sera fixé à l'étape 2 de l'implémentation). Permet la vérification cryptographique indépendante de chaque itération. Présent uniquement en attestation_class 'session-signed'.",
+            "minLength": 1
+          },
+          "tsa_status": {
+            "type": "string",
+            "description": "Statut de l'ancrage temporel externe (TSA RFC 3161). 'anchored' : jeton RFC 3161 valide obtenu, stocké dans ts_token — preuve externe de chronologie attestée par une TSA tierce. 'pending' : ancrage en cours ou différé — l'itération est valide sans attendre le retour TSA. 'failed' : ancrage échoué (réseau, timeout, TSA indisponible) — l'itération reste valide avec ce statut explicite, sans destruction ni blocage. PRINCIPE NON BLOQUANT : le statut TSA documente honnêtement ce qui a été ancré, mais ne conditionne jamais l'existence d'une itération. Présent uniquement en attestation_class 'session-signed'.",
+            "enum": ["anchored", "pending", "failed"]
+          },
+          "ts_token": {
+            "type": "string",
+            "description": "Jeton RFC 3161 (TimeStampToken) encodé en base64 standard (RFC 4648). Preuve externe cryptographiquement vérifiable de la chronologie, émise par une TSA tierce indépendante. Présent UNIQUEMENT lorsque tsa_status == 'anchored' ; absent dans tous les autres cas (pending, failed, ou tsa_status absent). Contraste avec local_time (déclaratif, horloge machine) : ts_token est attesté par une autorité externe et constitue une preuve réelle de chronologie.",
+            "minLength": 1
           }
+        },
+        "if": {
+          "required": ["tsa_status"],
+          "properties": {"tsa_status": {"const": "anchored"}}
+        },
+        "then": {"required": ["ts_token"]},
+        "else": {
+          "properties": {"ts_token": false}
         },
         "additionalProperties": false
       }
@@ -99,5 +132,5 @@
     }
   },
   "additionalProperties": false,
-  "$comment": "v0.1.1 — ajout de provider et model par itération (champs optionnels) pour le support multi-fournisseur. Rétrocompatible : les logs mono-fournisseur existants restent valides. Pour les sessions multi-fournisseur, provider='multi' au niveau session et provider/model présents dans chaque itération. draft-07 fallback : remplacer '$schema' par 'http://json-schema.org/draft-07/schema#'."
+  "$comment": "v0.1.2 — ajout des champs session-signed dans iterations[] : local_time (horodatage déclaratif machine, NON prouvé), prev_sig_hash (chaîne d'intégrité, genèse=64 zéros pour seq=1), sig (signature Ed25519 base64), tsa_status (anchored/pending/failed — ancrage non bloquant), ts_token (jeton RFC 3161 base64, présent uniquement si tsa_status='anchored'). if/then/else enforce la contrainte ts_token⟺anchored. Tous les nouveaux champs sont optionnels → rétrocompatibilité totale avec les logs post-session existants. v0.1.1 : ajout de provider et model par itération pour le support multi-fournisseur."
 }
