@@ -1,7 +1,7 @@
 {
   "rain_version": "0.1.0",
-  "bundle_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "created_at": "2026-05-24T21:00:00Z",
+  "bundle_id": "04b453d3-2617-4e87-bf7d-b4c86f136058",
+  "created_at": "2026-05-26T09:49:06Z",
   "proof_level": "P2",
   "files": [
     {
@@ -18,23 +18,23 @@
     },
     {
       "name": "policy.json",
-      "sha256": "ebe5b30398fb01b909c9150cf64e2aa4db8350b6a520a268dc55ddec6cf55cda",
-      "sha3_256": "ab7205feadc68edd803fc34ba7f4727e0753a90e52a1de4ed87943142d3a8df5",
+      "sha256": "ef6d02218cf719b4f1b0b308e60f9fcb8e40c00dee557e59830947636a5e32b7",
+      "sha3_256": "2c3483ce45396e1bcb17072e5f9b39c3e2f3fc6b2e2d76204f48a8fd40e90d29",
       "role": "policy"
     },
     {
       "name": "signer-cert.pem",
-      "sha256": "cbd5a7cd5db62704d7069ace488e6939b5522b0811ef5ea1b00aaaef461ba41b",
-      "sha3_256": "cd2b66eb63bdb1098895dfc7c6578c04336d88de6fbd2f598eff67b243cbbe4d",
+      "sha256": "75102a344b6aef8de768d127f962ea8e5734a031952130833cc1cf68be43ba2c",
+      "sha3_256": "e6e690d152ffefe073bd0d84dd003e537126a090b25453da8fc8d16d8e6e8a19",
       "role": "certificate"
     },
     {
       "name": "manifest.tsr",
-      "sha256": "9edfe14aedd8a28e1d766ac32b3ef142a6e77d7bc6b62611716e4bd8991d0bd3",
-      "sha3_256": "d13e3720e743dd3715aaafab05a9c471647f4eaedd49cd855ad310521fb74b6d",
+      "sha256": "0145a361ff2d10331657388e7474d736c1ce9839c50c864d36531ce7bcd59c22",
+      "sha3_256": "f90958122db25425ad54d7b8bb1e18eead34d8af37400b7aa3f007de3f131dcd",
       "role": "timestamp"
     }
   ],
-  "signer_cert_fingerprint": "def3183d0ffaec776eb856eba0e5148d9930743f63d38a15028a7cf68940555f",
-  "timestamp_anchor_sha256": "e53f8d02823fefc710e33cfba318abc961a0b0e6050ca44d9fa22493dc880d89"
+  "signer_cert_fingerprint": "fb58299300fb5271da88b92847db3dee9936bbb346ddb8fe9e28048b989713b7",
+  "timestamp_anchor_sha256": "3bbcb30c5c43a36ef380ad4bc68846b3fb2dcc6e00b807b4fa3dd2960883b8e3"
 }
