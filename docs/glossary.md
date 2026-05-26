@@ -10,13 +10,13 @@ de l'artwork (SHA-256 + SHA3-256), un manifest C2PA, un timestamp RFC 3161,
 une signature et son certificat, policy.json, et le script de vérification.
 
 ## Proof Level (niveau de preuve)
-P1 — Déclaratif. L'auteur documente son processus sans preuve
-cryptographique de session. Valide, mais confiance minimale.
+P1 — Déclaratif. L'auteur atteste son processus sans preuve
+cryptographique de session. Attestation de bonne foi ; confiance minimale.
 
 P2 — Signé. SDK capturant et signant chaque étape en temps réel.
 Preuve cryptographique de la session.
 
-P3 — Souverain. Clés gérées par le client (BYOK/HYOK). RAIN ne voit
+P3 (BYOK/HYOK). Clés contrôlées par le client. RAIN ne voit
 jamais le contenu, seulement un hash signé. Attestation produite côté client.
 
 ## Source class

@@ -22,9 +22,9 @@ Le droit d'auteur 2026 et l'AI Act européen exigent de documenter le contrôle 
 
 **Trois niveaux de preuve**
 
-- **P1 (déclaratif).** L'auteur déclare son processus ; le bundle contient intent, policy et hashes. Pas de signature cryptographique. Valeur probatoire : preuve de bonne foi.
+- **P1 (déclaratif).** L'auteur déclare son processus ; le bundle contient intent, policy et hashes. Pas de signature cryptographique. Valeur : attestation de bonne foi horodatée.
 - **P2 (signé).** Le manifest est signé Ed25519 par une clé RAIN, optionnellement horodaté RFC 3161. Valeur probatoire : falsification détectable.
-- **P3 (souverain).** L'auteur apporte sa propre clé (BYOK/HYOK) ; RAIN ne voit que les hashes signés. Valeur probatoire maximale ; non encore implémenté en v0.
+- **P3 (BYOK/HYOK, clés contrôlées par le client).** L'auteur apporte sa propre clé de signature ; RAIN ne voit que les hashes signés. Valeur probatoire maximale ; non encore implémenté en v0.
 
 ---
 
@@ -159,7 +159,7 @@ Ces limites sont connues et documentées. Elles n'affectent pas la logique crypt
 
 - **CA auto-signée.** La CA générée par `gen-ca.sh` n'est pas ancrée dans un trust store reconnu (Mozilla, Apple, Microsoft). La chaîne `CA → signer` se vérifie avec `openssl verify -CAfile pki/ca-cert.pem`, mais elle ne sera pas acceptée automatiquement par des navigateurs ou des outils tiers. L'ancrage dans une CA qualifiée eIDAS est prévu pour la production.
 - **TSA non qualifiée eIDAS.** Le service d'horodatage utilisé (freetsa.org) délivre des jetons RFC 3161 techniquement conformes et vérifiables par `openssl ts`, mais sans valeur légale équivalente à un service qualifié. Les mêmes mécanismes s'appliquent à une TSA qualifiée ; seul l'ancrage change.
-- **P3 non implémenté.** Le niveau souverain (BYOK/HYOK) est défini dans le schéma et le glossaire ; son pipeline de capture n'est pas encore livré.
+- **P3 non implémenté.** Le niveau BYOK/HYOK (clés contrôlées par le client) est défini dans le schéma et le glossaire ; son pipeline de capture n'est pas encore livré.
 - **Confiance API pour MALS.** En `attestation_class: post-session`, la fidélité entre les hashes du log et les échanges réels repose sur la bonne foi de l'implémentation cliente. Une `attestation_class: session-signed` (signature par itération en temps réel) est prévue pour P2 MALS.
 
 ---
@@ -167,6 +167,16 @@ Ces limites sont connues et documentées. Elles n'affectent pas la logique crypt
 ## Modèle de confiance
 
 Toute information nécessaire à la vérification vit soit dans l'objet signé (le manifest), soit dans une autorité externe vérifiable (TSA, CA), jamais dans un état non signé ou dans un registre propriétaire. Un bundle RAIN est un objet auto-contenu à ancrage externe attesté, au même titre qu'un commit Git signé ou une entrée dans un journal de transparence : sa validité est vérifiable par quiconque dispose des outils standards (`openssl`, `bash`, ou un navigateur moderne), sans aucune dépendance envers une infrastructure centralisée.
+
+---
+
+## Modèle de révocation
+
+`verify.sh` vérifie la chaîne de certificats : il confirme via `openssl verify -CAfile pki/ca-cert.pem` que le certificat signataire est bien émis par la CA attendue. Une chaîne invalide déclenche un DOWNGRADE (`CHAIN_UNTRUSTED`).
+
+En revanche, la v0 ne consulte aucun statut de révocation : il n'y a ni CRL ni répondeur OCSP. Concrètement, si une clé signataire est compromise, un bundle signé avant la découverte de la compromission reste accepté par `verify.sh`, qui n'a aucun moyen d'apprendre que le certificat a été révoqué. La conservation de l'intégrité cryptographique d'un bundle est donc distincte de la confiance qu'on accorde à la clé qui l'a signé.
+
+En production, l'ancrage dans une CA qualifiée eIDAS fournit une infrastructure de révocation standardisée (point de distribution CRL et répondeur OCSP), que `verify.sh` pourra interroger. Cet ajout ne modifie pas le format de bundle : seule l'étape de vérification de chaîne se complète d'un contrôle de statut.
 
 ---
 
