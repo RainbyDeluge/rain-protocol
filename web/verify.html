@@ -260,7 +260,7 @@ footer {
 
 <header>
   <div class="logo">RAIN <span class="s">//</span> <span class="v">VERIFY</span></div>
-  <div class="ver">v0.1.1</div>
+  <div class="ver">v0.1.2</div>
   <div class="tag">Responsible AI Notation — vérification côté navigateur — aucune donnée ne quitte votre appareil</div>
 </header>
 
@@ -275,12 +275,12 @@ footer {
 <div class="res" id="res"></div>
 
 <div class="note">
-  <b>Périmètre navigateur v0.1.1 :</b>
+  <b>Périmètre navigateur v0.1.2 :</b>
   intégrité SHA-256+SHA3-256 <b style="color:var(--gr)">✓</b> —
   signature Ed25519 <b style="color:var(--gr)">✓</b> (Chrome 113+, Firefox 118+, Safari 17+) —
-  chaîne de certification <b style="color:var(--gd)">⚠</b> —
-  timestamp RFC 3161 <b style="color:var(--gd)">⚠</b> —
-  contrôle complet CA + TSR : <code>bash scripts/verify.sh &lt;bundle-dir&gt;</code>
+  chaîne CA <b style="color:var(--gr)">✓</b> si <code>ca-cert.pem</code> inclus dans le bundle, neutre sinon —
+  timestamp RFC 3161 : ancre SHA-256 <b style="color:var(--gr)">✓</b> · signature TSA <b style="color:var(--gd)">⚠</b> —
+  vérification TSA complète : <code>bash scripts/verify.sh &lt;bundle-dir&gt;</code>
 </div>
 
 <footer>
@@ -379,36 +379,196 @@ function extractEd25519Spki(der) {
   throw new Error('Clé publique Ed25519 introuvable dans le certificat (OID 1.3.101.112 absent)');
 }
 
-// ── Signature verifier ────────────────────────────────────────────────────────
+// ── Minimal DER parser ────────────────────────────────────────────────────────
+
+// Read a DER length field starting at buf[off].
+// Returns { len, off } where off points to the first byte of the value.
+function derLen(buf, off) {
+  const b = buf[off++];
+  if (b < 0x80) return { len: b, off };
+  const n = b & 0x7f;
+  if (n < 1 || n > 4) throw new Error('DER: longueur non supportée à l\'offset ' + (off - 1));
+  let len = 0;
+  for (let i = 0; i < n; i++) len = (len << 8) | buf[off++];
+  return { len, off };
+}
+
+// Read one TLV (Tag-Length-Value) from buf at position off.
+// Returns { tag, len, vOff (first byte of value), next (first byte after value) }.
+function derTLV(buf, off, expectedTag, name) {
+  if (off >= buf.length) throw new Error('DER: dépassement de tampon à ' + off);
+  const tag = buf[off++];
+  const { len, off: vOff } = derLen(buf, off);
+  if (expectedTag !== undefined && tag !== expectedTag) {
+    throw new Error(
+      'DER: ' + (name || 'champ') +
+      ' — tag attendu 0x' + expectedTag.toString(16) +
+      ', obtenu 0x' + tag.toString(16) +
+      ' à l\'offset ' + (off - 1)
+    );
+  }
+  return { tag, len, vOff, next: vOff + len };
+}
+
+// ── X.509 TBSCertificate + signature extractor ────────────────────────────────
+
+// Extract the TBSCertificate bytes (the signed payload) and the 64-byte Ed25519
+// signature from an Ed25519 X.509 certificate in DER format.
+//
+// X.509 Certificate structure (RFC 5280):
+//   SEQUENCE {
+//     TBSCertificate SEQUENCE { ... }   ← what the CA signed
+//     signatureAlgorithm SEQUENCE { OID id-Ed25519 }
+//     signature BIT STRING { 0x00 || 64-byte-sig }
+//   }
+function x509TbsAndSig(der) {
+  const cert   = derTLV(der, 0,          0x30, 'Certificate');
+  const tbs    = derTLV(der, cert.vOff,  0x30, 'TBSCertificate');
+  const tbsBytes = der.slice(cert.vOff, tbs.next);
+
+  const sigAlg = derTLV(der, tbs.next,   0x30, 'signatureAlgorithm');
+  const sigBS  = derTLV(der, sigAlg.next, 0x03, 'signature BIT STRING');
+
+  if (der[sigBS.vOff] !== 0x00)
+    throw new Error('BIT STRING signature : bits inutilisés != 0');
+  const sig64 = der.slice(sigBS.vOff + 1, sigBS.next);
+  if (sig64.length !== 64)
+    throw new Error('Signature Ed25519 : 64 octets attendus, obtenu ' + sig64.length);
+
+  return { tbsBytes, sig64 };
+}
+
+// ── CA chain verifier ─────────────────────────────────────────────────────────
+
+// Verify that signerCertDer was signed by the key in caCertDer.
+// Both are Uint8Array of DER-encoded Ed25519 X.509 certificates.
+// Returns { valid: bool, error: string|null }.
+async function verifyCaChain(signerCertDer, caCertDer) {
+  try {
+    const caSpki  = extractEd25519Spki(caCertDer);
+    const caKey   = await crypto.subtle.importKey(
+      'spki', caSpki, { name: 'Ed25519' }, false, ['verify']
+    );
+    const { tbsBytes, sig64 } = x509TbsAndSig(signerCertDer);
+    const valid = await crypto.subtle.verify({ name: 'Ed25519' }, caKey, sig64, tbsBytes);
+    return { valid, error: null };
+  } catch (e) {
+    return { valid: false, error: e.message };
+  }
+}
+
+// ── RFC 3161 timestamp extractor ──────────────────────────────────────────────
+
+// Extract the messageImprint hash and genTime from an RFC 3161 TSR (DER bytes).
+//
+// A TSR is a TimeStampResp wrapping a CMS SignedData wrapping a TSTInfo:
+//   TimeStampResp SEQUENCE {
+//     PKIStatusInfo SEQUENCE { INTEGER 0 }
+//     ContentInfo SEQUENCE {
+//       contentType OID (id-signedData)
+//       content [0] EXPLICIT SEQUENCE (SignedData) {
+//         version INTEGER
+//         digestAlgorithms SET
+//         encapContentInfo SEQUENCE {
+//           eContentType OID (id-ct-TSTInfo)
+//           eContent [0] EXPLICIT OCTET STRING { DER(TSTInfo) }
+//         }
+//         ...
+//       }
+//     }
+//   }
+//
+//   TSTInfo SEQUENCE {
+//     version INTEGER
+//     policy OID
+//     messageImprint SEQUENCE {
+//       hashAlgorithm SEQUENCE { OID SHA-256 ... }
+//       hashedMessage OCTET STRING   ← the 32-byte hash we compare
+//     }
+//     serialNumber INTEGER
+//     genTime GeneralizedTime        ← "YYYYMMDDHHmmssZ"
+//     ...
+//   }
+//
+// Returns { imprint: Uint8Array (32 bytes), genTime: string } or throws.
+function tsrExtract(der) {
+  function t(buf, off, expTag, name) { return derTLV(buf, off, expTag, name); }
+
+  // Navigate the outer TimeStampResp wrapper
+  const resp    = t(der, 0,              0x30, 'TimeStampResp');
+  const status  = t(der, resp.vOff,      0x30, 'PKIStatusInfo');
+  const ci      = t(der, status.next,    0x30, 'ContentInfo');
+  const ctOid   = t(der, ci.vOff,        0x06, 'contentType');
+  const c0      = t(der, ctOid.next,     0xa0, 'content[0]');
+  const sd      = t(der, c0.vOff,        0x30, 'SignedData');
+  const ver     = t(der, sd.vOff,        0x02, 'version');
+  const dAlgs   = t(der, ver.next,       0x31, 'digestAlgorithms');
+  const eci     = t(der, dAlgs.next,     0x30, 'encapContentInfo');
+  const ectOid  = t(der, eci.vOff,       0x06, 'eContentType');
+  const ec0     = t(der, ectOid.next,    0xa0, 'eContent[0]');
+  const octet   = t(der, ec0.vOff,       0x04, 'TSTInfo OCTET STRING');
+
+  // TSTInfo DER bytes are the value of the OCTET STRING
+  const tsi = der.slice(octet.vOff, octet.next);
+
+  // Navigate TSTInfo
+  const tst  = t(tsi, 0,          0x30, 'TSTInfo');
+  const tv   = t(tsi, tst.vOff,   0x02, 'TSTInfo.version');
+  const pol  = t(tsi, tv.next,    0x06, 'TSTInfo.policy');
+  const mi   = t(tsi, pol.next,   0x30, 'messageImprint');
+  const ha   = t(tsi, mi.vOff,    0x30, 'hashAlgorithm');
+  const hm   = t(tsi, ha.next,    0x04, 'hashedMessage');
+  const imprint = tsi.slice(hm.vOff, hm.next);
+
+  // genTime: serialNumber INTEGER followed by GeneralizedTime (tag 0x18)
+  const sn   = t(tsi, mi.next,    0x02, 'serialNumber');
+  const gt   = t(tsi, sn.next,    0x18, 'genTime');
+  const genTimeRaw = new TextDecoder().decode(tsi.slice(gt.vOff, gt.next));
+  // GeneralizedTime "YYYYMMDDHHmmssZ" → "YYYY-MM-DD HH:mm:ss UTC"
+  const genTime = genTimeRaw.replace(
+    /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/,
+    '$1-$2-$3 $4:$5:$6 UTC'
+  );
+
+  return { imprint, genTime };
+}
+
+// ── Signature + chain + timestamp verifier ────────────────────────────────────
 
 async function verifyCrypto(map, manifest) {
   const r = {
-    sigStatus:    'pending',
-    fpStatus:     null,
-    fpDeclared:   manifest.signer_cert_fingerprint || null,
-    fpActual:     null,
-    anchorDigest: manifest.timestamp_anchor_sha256 || null,
-    hasTsr:       !!(map['manifest.tsr'] ||
-                     (manifest.files || []).some(f => f.role === 'timestamp')),
-    error:        null,
+    sigStatus:       'pending',
+    fpStatus:        null,
+    fpDeclared:      manifest.signer_cert_fingerprint || null,
+    fpActual:        null,
+    anchorDigest:    manifest.timestamp_anchor_sha256 || null,
+    hasTsr:          !!(map['manifest.tsr'] ||
+                        (manifest.files || []).some(f => f.role === 'timestamp')),
+    error:           null,
+    // CA chain
+    chainStatus:     null,   // 'verified' | 'invalid' | 'absent' | 'error'
+    chainError:      null,
+    // RFC 3161 timestamp anchor
+    tsrImprint:      null,   // hex string of extracted messageImprint
+    tsrGenTime:      null,   // formatted timestamp string
+    tsrMatchesAnchor: null,  // bool | null (null when no anchorDigest in manifest)
+    tsrError:        null,
   };
 
+  // ── Ed25519 signature ──────────────────────────────────────────────────────
   try {
     const certDer = pemToDer(new TextDecoder().decode(map['signer-cert.pem']));
 
-    // Fingerprint: SHA-256 of DER-encoded certificate (matches openssl x509 -fingerprint -sha256)
+    // SHA-256 fingerprint of the DER certificate (matches openssl x509 -fingerprint -sha256)
     r.fpActual = await sha256hex(certDer);
     r.fpStatus = r.fpDeclared
       ? (r.fpActual === r.fpDeclared ? 'match' : 'mismatch')
       : 'absent';
 
-    // Extract SubjectPublicKeyInfo, import as Ed25519 key
     const spki   = extractEd25519Spki(certDer);
     const pubKey = await crypto.subtle.importKey(
       'spki', spki, { name: 'Ed25519' }, false, ['verify']
     );
-
-    // Verify detached signature over the exact manifest.json bytes
     const ok = await crypto.subtle.verify(
       { name: 'Ed25519' }, pubKey,
       map['manifest.sig'],
@@ -421,6 +581,38 @@ async function verifyCrypto(map, manifest) {
     r.error = (e instanceof DOMException && e.name === 'NotSupportedError')
       ? 'Ed25519 non supporté par ce navigateur — Chrome 113+, Firefox 118+, Safari 17+ requis'
       : e.message;
+  }
+
+  // ── CA chain verification ──────────────────────────────────────────────────
+  // If ca-cert.pem is present, verify the signer cert was issued by that CA.
+  // Standard bundles do not include ca-cert.pem; its absence is neutral (not a failure).
+  if (map['ca-cert.pem'] && map['signer-cert.pem']) {
+    const caDer     = pemToDer(new TextDecoder().decode(map['ca-cert.pem']));
+    const signerDer = pemToDer(new TextDecoder().decode(map['signer-cert.pem']));
+    const result    = await verifyCaChain(signerDer, caDer);
+    r.chainStatus = result.valid ? 'verified' : 'invalid';
+    r.chainError  = result.error;
+  } else {
+    r.chainStatus = 'absent';
+  }
+
+  // ── RFC 3161 timestamp anchor ──────────────────────────────────────────────
+  // Extract the messageImprint hash from the TSR and compare it to
+  // timestamp_anchor_sha256 in the signed manifest (SSOT per RAIN spec).
+  // This confirms the TSR seals exactly the digest the manifest declares.
+  // The TSA signature itself is NOT verified here (verify.sh handles that).
+  if (r.hasTsr && map['manifest.tsr']) {
+    try {
+      const tsrDer = new Uint8Array(map['manifest.tsr']);
+      const { imprint, genTime } = tsrExtract(tsrDer);
+      r.tsrImprint  = [...imprint].map(b => b.toString(16).padStart(2, '0')).join('');
+      r.tsrGenTime  = genTime;
+      r.tsrMatchesAnchor = r.anchorDigest != null
+        ? r.tsrImprint === r.anchorDigest
+        : null;
+    } catch (e) {
+      r.tsrError = e.message;
+    }
   }
 
   return r;
@@ -568,29 +760,41 @@ async function verify(map, sourceName) {
 
   if (pl === 'P2' || pl === 'P3') {
     if (hasSigFile && hasCertFile) {
-      setStatus('Vérification signature Ed25519…', 'proc');
+      setStatus('Vérification cryptographique…', 'proc');
       cryptoResult = await verifyCrypto(map, manifest);
     } else {
       cryptoResult = {
-        sigStatus:    'absent',
-        fpStatus:     null,
-        fpDeclared:   manifest.signer_cert_fingerprint || null,
-        fpActual:     null,
-        anchorDigest: manifest.timestamp_anchor_sha256 || null,
-        hasTsr:       hasTsrFile,
-        error:        null,
+        sigStatus:       'absent',
+        fpStatus:        null,
+        fpDeclared:      manifest.signer_cert_fingerprint || null,
+        fpActual:        null,
+        anchorDigest:    manifest.timestamp_anchor_sha256 || null,
+        hasTsr:          hasTsrFile,
+        error:           null,
+        chainStatus:     'absent',
+        chainError:      null,
+        tsrImprint:      null,
+        tsrGenTime:      null,
+        tsrMatchesAnchor: null,
+        tsrError:        null,
       };
     }
   } else {
     // P1 — no signature required; still surface timestamp anchor if present
     cryptoResult = {
-      sigStatus:    'na',
-      fpStatus:     null,
-      fpDeclared:   null,
-      fpActual:     null,
-      anchorDigest: manifest.timestamp_anchor_sha256 || null,
-      hasTsr:       hasTsrFile,
-      error:        null,
+      sigStatus:       'na',
+      fpStatus:        null,
+      fpDeclared:      null,
+      fpActual:        null,
+      anchorDigest:    manifest.timestamp_anchor_sha256 || null,
+      hasTsr:          hasTsrFile,
+      error:           null,
+      chainStatus:     null,
+      chainError:      null,
+      tsrImprint:      null,
+      tsrGenTime:      null,
+      tsrMatchesAnchor: null,
+      tsrError:        null,
     };
   }
 
@@ -747,13 +951,29 @@ function renderCryptoSection(cr, pl) {
       );
     }
 
-    // ── CA chain — honest scope boundary ──────────────────────────────────
+    // ── CA chain ───────────────────────────────────────────────────────────
+    // Verified if ca-cert.pem is present in the bundle; neutral if absent
+    // (standard bundles do not include it).
+    let chainCell;
+    switch (cr.chainStatus) {
+      case 'verified':
+        chainCell = '<span class="ok-">✓ certificat signataire émis par la CA fournie</span>';
+        break;
+      case 'invalid':
+        chainCell = '<span class="bad-">✗ chaîne invalide — certificat non signé par la CA fournie</span>';
+        break;
+      case 'error':
+        chainCell =
+          '<span class="warn-">⚠ erreur de vérification : ' + esc(cr.chainError || '') + '</span>';
+        break;
+      default: // 'absent' or null
+        chainCell =
+          '<span class="na-">CA non incluse dans le bundle</span>' +
+          '<span class="na-"> — vérification complète : <code>verify.sh</code></span>';
+    }
     rows.push(
       '<tr><td class="fn">Chaîne de certification (CA)</td>' +
-      '<td class="ck">' +
-        '<span class="warn-">⚠ non vérifiée en navigateur</span>' +
-        '<span class="na-"> — vérification complète : <code>verify.sh</code></span>' +
-      '</td></tr>'
+      '<td class="ck">' + chainCell + '</td></tr>'
     );
 
   } else {
@@ -764,29 +984,40 @@ function renderCryptoSection(cr, pl) {
     );
   }
 
-  // ── RFC 3161 timestamp — honest scope boundary ─────────────────────────────
-  if (cr.hasTsr) {
-    const anchor = cr.anchorDigest;
-    let tsCell;
-    if (anchor) {
-      // timestamp_anchor_sha256 comes from the signed manifest (SSOT); display the anchor.
-      tsCell =
-        '<span class="warn-">⚠ présent · ancre : <code>' + esc(anchor.slice(0, 16)) + '…</code></span>' +
-        '<span class="na-"> — vérification cryptographique complète : <code>verify.sh</code></span>';
-    } else {
-      tsCell =
-        '<span class="warn-">⚠ présent · <code>timestamp_anchor_sha256</code> absent du manifest signé</span>';
-    }
-    rows.push(
-      '<tr><td class="fn">Horodatage RFC 3161</td>' +
-      '<td class="ck">' + tsCell + '</td></tr>'
-    );
+  // ── RFC 3161 timestamp ─────────────────────────────────────────────────────
+  // Partial verification: extract the messageImprint from the TSR and compare
+  // it to timestamp_anchor_sha256 in the signed manifest (SSOT).
+  // The TSA signature is NOT verified here; that requires verify.sh.
+  let tsCell;
+  if (!cr.hasTsr) {
+    tsCell = '<span class="na-">— absent</span>';
+  } else if (cr.tsrError) {
+    tsCell =
+      '<span class="warn-">⚠ extraction TSR : ' + esc(cr.tsrError) + '</span>' +
+      '<span class="na-"> — vérification complète : <code>verify.sh</code></span>';
+  } else if (cr.tsrMatchesAnchor === true) {
+    const dated = cr.tsrGenTime
+      ? ' · scellé le <b style="color:var(--tx2)">' + esc(cr.tsrGenTime) + '</b>'
+      : '';
+    tsCell =
+      '<span class="ok-">✓ ancre concordante</span>' + dated +
+      '<span class="na-"> · signature TSA : <code>verify.sh</code></span>';
+  } else if (cr.tsrMatchesAnchor === false) {
+    tsCell =
+      '<span class="bad-">✗ imprint TSR (' + esc((cr.tsrImprint || '').slice(0, 16)) +
+      '…) ne correspond pas au timestamp_anchor_sha256</span>';
+  } else if (cr.anchorDigest) {
+    // TSR present and parseable but tsrMatchesAnchor is null (shouldn't happen normally)
+    tsCell = '<span class="warn-">⚠ présent · ancre non comparée</span>';
   } else {
-    rows.push(
-      '<tr><td class="fn">Horodatage RFC 3161</td>' +
-      '<td class="ck"><span class="na-">— absent</span></td></tr>'
-    );
+    // TSR present but timestamp_anchor_sha256 absent from manifest
+    tsCell =
+      '<span class="warn-">⚠ TSR présent — <code>timestamp_anchor_sha256</code> absent du manifest signé</span>';
   }
+  rows.push(
+    '<tr><td class="fn">Horodatage RFC 3161</td>' +
+    '<td class="ck">' + tsCell + '</td></tr>'
+  );
 
   return (
     '<div class="sec">' +
