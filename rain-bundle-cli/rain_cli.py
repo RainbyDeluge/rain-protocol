@@ -74,13 +74,22 @@ def main() -> None:
     # ── Validate inputs ───────────────────────────────────────────────────────
     artwork = args.artwork.resolve()
     if not artwork.exists():
-        print(f"Error: artwork file not found: {artwork}", file=sys.stderr)
+        print(f"Erreur : fichier artwork introuvable : {artwork}", file=sys.stderr)
         sys.exit(1)
 
     mals = args.mals.resolve() if args.mals else None
     if mals is not None and not mals.exists():
-        print(f"Error: MALS log file not found: {mals}", file=sys.stderr)
+        print(f"Erreur : fichier MALS introuvable : {mals}", file=sys.stderr)
         sys.exit(1)
+
+    # M6 — --no-timestamp is only meaningful with --level P2.  Silently ignoring
+    # it with P1 could mislead the user into thinking timestamping was suppressed.
+    if args.no_timestamp and args.level != "P2":
+        print(
+            "Avertissement : --no-timestamp sans effet avec --level P1 "
+            "(l'horodatage RFC 3161 ne s'applique qu'aux bundles P2).",
+            file=sys.stderr,
+        )
 
     ai_tools = _parse_ai_tools(args.ai_tools)
     output   = args.output.resolve()
@@ -116,10 +125,19 @@ def main() -> None:
             mals_path=mals,
         )
     except RuntimeError as exc:
-        print(f"\nError: {exc}", file=sys.stderr)
+        print(f"\nErreur : {exc}", file=sys.stderr)
         sys.exit(1)
     except Exception as exc:
-        print(f"\nUnexpected error: {exc}", file=sys.stderr)
+        # m6 — affiche type + message pour les cas non prévus ; traceback complet
+        # disponible via RAIN_DEBUG=1 sans polluer la sortie normale.
+        print(
+            f"\nErreur inattendue : {type(exc).__name__}: {exc}\n"
+            f"  (définissez RAIN_DEBUG=1 pour le traceback complet)",
+            file=sys.stderr,
+        )
+        if __import__("os").environ.get("RAIN_DEBUG"):
+            import traceback
+            traceback.print_exc()
         sys.exit(1)
 
     print()
@@ -127,7 +145,19 @@ def main() -> None:
         print(f"Bundle ready: {output}")
         if args.zip:
             import json as _json
-            bundle_id = _json.loads((output / "manifest.json").read_text()).get("bundle_id", "bundle")
+            # M9 — this read was outside the main try/except; a FileNotFoundError or
+            # JSONDecodeError here would produce an unhandled traceback.
+            try:
+                bundle_id = _json.loads(
+                    (output / "manifest.json").read_text()
+                ).get("bundle_id", "bundle")
+            except (FileNotFoundError, _json.JSONDecodeError) as _zip_err:
+                print(
+                    f"\nAvertissement : lecture de bundle_id impossible dans manifest.json "
+                    f"— nom de zip 'bundle' utilisé ({_zip_err})",
+                    file=sys.stderr,
+                )
+                bundle_id = "bundle"
             zip_path = zip_bundle(output, bundle_id)
             print(f"  zip      : {zip_path}")
 
@@ -141,8 +171,8 @@ def main() -> None:
             _ext = artwork.suffix.lower()
             if _ext not in (".png", ".jpg", ".jpeg"):
                 print(
-                    f"\nWarning: --c2pa — C2PA embedding applies to PNG/JPEG only "
-                    f"(artwork is {_ext or 'no extension'}); skipped.",
+                    f"\nAvertissement : --c2pa — l'intégration C2PA ne s'applique qu'aux PNG/JPEG "
+                    f"(artwork : {_ext or 'aucune extension'}) ; ignoré.",
                     file=sys.stderr,
                 )
             else:
@@ -157,17 +187,47 @@ def main() -> None:
                     _c2pa_name = f"{artwork.stem}-c2pa{_ext}"
                     _c2pa_in_bundle = output / _c2pa_name
                     _distribuable_dir = output.parent / "distribuable"
-                    _distribuable_dir.mkdir(exist_ok=True)
-                    _c2pa_dest = _distribuable_dir / _c2pa_name
-                    _c2pa_in_bundle.rename(_c2pa_dest)
-                    print(f"\n  c2pa     : {_c2pa_dest}")
+                    # C1 — wrap the rename in try/except: if c2pa-embed.sh exited 0
+                    # but produced an unexpected output filename, rename() raises
+                    # FileNotFoundError.  Without this guard the exception was
+                    # unhandled (this block is outside the main try/except) and
+                    # produced a raw Python traceback with no RAIN context.
+                    try:
+                        _distribuable_dir.mkdir(exist_ok=True)
+                        _c2pa_dest = _distribuable_dir / _c2pa_name
+                        _c2pa_in_bundle.rename(_c2pa_dest)
+                        print(f"\n  c2pa     : {_c2pa_dest}")
+                    except (FileNotFoundError, OSError) as _mv_err:
+                        print(
+                            f"\nAvertissement : image C2PA non déplacée — le bundle est valide, "
+                            f"mais le livrable C2PA n'a pas pu être placé dans distribuable/.\n"
+                            f"  Fichier attendu : {_c2pa_in_bundle}\n"
+                            f"  Erreur          : {_mv_err}",
+                            file=sys.stderr,
+                        )
                 else:
                     print(
-                        f"\nWarning: c2pa-embed.sh exited {_embed_rc} — C2PA image not produced.",
+                        f"\nAvertissement : c2pa-embed.sh a terminé avec le code {_embed_rc} — image C2PA non produite.",
                         file=sys.stderr,
                     )
+    elif rc == 2:
+        # C2 — exit 2 = DOWNGRADE: the bundle exists and is usable at P1 effective level,
+        # but a declared proof attribute could not be fully verified (e.g. missing sig,
+        # untrusted CA, absent timestamp).  This is NOT the same as INVALID.
+        print(
+            f"\nBundle built — DOWNGRADE: declared proof level could not be fully verified "
+            f"(effective level P1). Run for details:\n"
+            f"  bash scripts/verify.sh {output}",
+            file=sys.stderr,
+        )
     else:
-        print(f"Bundle created but verify.sh returned exit {rc}.", file=sys.stderr)
+        # exit 1 (or any unexpected non-zero) = INVALID: the bundle failed integrity checks.
+        print(
+            f"\nBundle INVALID — integrity check failed (verify.sh exited {rc}). "
+            f"The bundle should not be distributed. Run for details:\n"
+            f"  bash scripts/verify.sh {output}",
+            file=sys.stderr,
+        )
     sys.exit(rc)
 
 

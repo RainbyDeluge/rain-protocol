@@ -123,12 +123,27 @@ fi
 # ── Step 2: Read bundle metadata ──────────────────────────────────────────────
 
 echo "[2/6] Reading RAIN bundle metadata..."
-read -r BUNDLE_ID PROOF_LEVEL RAIN_VERSION <<< "$(python3 - "${MANIFEST_FILE}" <<'PYEOF'
+# C4 — protect against missing/malformed manifest fields.
+# Previously d['bundle_id'] raised a raw KeyError traceback with no RAIN context;
+# a missing bundle_id is now reported as a clear actionable error.
+_BUNDLE_META="$(python3 - "${MANIFEST_FILE}" <<'PYEOF'
 import json, sys
-d = json.load(open(sys.argv[1]))
-print(d['bundle_id'], d.get('proof_level', 'P1'), d.get('rain_version', '0.1.0'))
+try:
+    d = json.load(open(sys.argv[1]))
+except json.JSONDecodeError as e:
+    sys.stderr.write(f"Error: manifest.json is not valid JSON: {e}\n")
+    sys.exit(1)
+bid = d.get('bundle_id')
+if not bid:
+    sys.stderr.write(
+        "Error: manifest.json missing required field 'bundle_id' — "
+        "is this a valid RAIN bundle? Re-run: python3 rain-bundle-cli/rain_cli.py create …\n"
+    )
+    sys.exit(1)
+print(bid, d.get('proof_level', 'P1'), d.get('rain_version', '0.1.0'))
 PYEOF
-)"
+)" || exit 1
+read -r BUNDLE_ID PROOF_LEVEL RAIN_VERSION <<< "$_BUNDLE_META"
 printf '  bundle_id    : %s\n' "${BUNDLE_ID}"
 printf '  proof_level  : %s\n' "${PROOF_LEVEL}"
 printf '  rain_version : %s\n' "${RAIN_VERSION}"
@@ -167,6 +182,18 @@ for token, value in {
     "{{RAIN_VERSION}}": rain_version,
 }.items():
     raw = raw.replace(token, value)
+
+# m3 — detect unresolved {{TOKEN}} placeholders before handing the manifest to
+# c2patool.  A missing token was a silent no-op: the literal {{TOKEN}} stayed in
+# the JSON, causing c2patool to fail with a cryptic internal format error.
+import re as _re
+_remaining = _re.findall(r'\{\{[A-Z_]+\}\}', raw)
+if _remaining:
+    sys.stderr.write(
+        f"Error: jetons de template non résolus dans {tmpl_path} : {_remaining}\n"
+        f"  Vérifiez rain-manifest-template.json — ces marqueurs n'ont pas été substitués.\n"
+    )
+    sys.exit(1)
 
 data = json.loads(raw)
 with open(out_path, "w") as f:

@@ -35,6 +35,21 @@ from rain.mals_capture import (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _positive_int(val: str) -> int:
+    """M8 — argparse type for --max-tokens and --max-iterations.
+
+    Rejects zero and negative values at parse time so the user gets a clear
+    argparse error message rather than an obscure API rejection downstream.
+    """
+    try:
+        n = int(val)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {val!r}")
+    if n <= 0:
+        raise argparse.ArgumentTypeError(f"must be > 0, got {n}")
+    return n
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="mals",
@@ -91,12 +106,12 @@ def main() -> None:
         help=f"Modèle Gemini (défaut : {DEFAULT_MODELS['gemini']})",
     )
     p.add_argument(
-        "--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, dest="max_tokens",
-        help=f"Tokens max par réponse (défaut : {DEFAULT_MAX_TOKENS})",
+        "--max-tokens", type=_positive_int, default=DEFAULT_MAX_TOKENS, dest="max_tokens",
+        help=f"Tokens max par réponse, entier > 0 (défaut : {DEFAULT_MAX_TOKENS})",
     )
     p.add_argument(
-        "--max-iterations", type=int, default=MAX_ITERATIONS, dest="max_iterations",
-        help=f"Nombre max d'itérations (défaut : {MAX_ITERATIONS})",
+        "--max-iterations", type=_positive_int, default=MAX_ITERATIONS, dest="max_iterations",
+        help=f"Nombre max d'itérations, entier > 0 (défaut : {MAX_ITERATIONS})",
     )
     p.add_argument(
         "--stub-providers", default="", dest="stub_providers",
@@ -152,6 +167,19 @@ def main() -> None:
         p.strip() for p in args.stub_providers.split(",") if p.strip()
     } if args.stub_providers else set()
 
+    # M5 — validate stub provider names against the known PROVIDERS dict.
+    # Previously an unknown name (e.g. --stub-providers foo) silently did nothing
+    # or triggered an obscure downstream KeyError.
+    if stub_providers:
+        unknown = stub_providers - set(PROVIDERS)
+        if unknown:
+            print(
+                f"Erreur : providers inconnus dans --stub-providers : {sorted(unknown)}\n"
+                f"  Providers valides : {sorted(PROVIDERS)}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     print("MALS Session Capture")
     print(f"  prompts          : {prompts_file}")
     print(f"  sortie           : {output_file}")
@@ -179,9 +207,33 @@ def main() -> None:
     except (RuntimeError, ValueError) as exc:
         print(f"\nErreur : {exc}", file=sys.stderr)
         sys.exit(1)
+    except (ImportError, ModuleNotFoundError) as exc:
+        # C5 — SDK manquant (anthropic / openai / google-genai non installé).
+        # Sans ce handler, Python affiche un traceback brut incompréhensible pour
+        # un utilisateur qui n'a pas encore installé les dépendances.
+        print(
+            f"\nErreur : SDK manquant — {exc}\n"
+            f"  Installez les dépendances : pip install -r requirements.txt\n"
+            f"  Ou pour ce seul fournisseur : pip install {str(exc).split()[-1]}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     except KeyboardInterrupt:
         print("\nInterrompu.", file=sys.stderr)
         sys.exit(130)
+    except Exception as exc:
+        # C5 — filet de sécurité : toute exception non prévue (erreur réseau non
+        # enveloppée dans les providers, bug interne…) affiche un message clair
+        # au lieu d'un traceback brut.
+        print(
+            f"\nErreur inattendue : {type(exc).__name__}: {exc}\n"
+            f"  (utilisez RAIN_DEBUG=1 pour le traceback complet)",
+            file=sys.stderr,
+        )
+        if __import__("os").environ.get("RAIN_DEBUG"):
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

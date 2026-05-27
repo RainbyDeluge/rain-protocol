@@ -130,7 +130,19 @@ def create_bundle(
     # is covered by the manifest hash and therefore by the P2 signature.
     mals_dest_name: str | None = None
     if mals_path is not None:
-        mals_doc = json.loads(mals_path.read_text(encoding="utf-8"))
+        # m5 — JSONDecodeError used to bubble up as a generic "Unexpected error:
+        # Expecting value: line 1 column 1 (char 0)" with no file context.
+        # OSError/UnicodeDecodeError (binary file, wrong encoding) also contextualized.
+        try:
+            mals_doc = json.loads(mals_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as _e:
+            raise ValueError(
+                f"Le fichier MALS n'est pas du JSON valide : {mals_path.name} — {_e}"
+            ) from _e
+        except (OSError, UnicodeDecodeError) as _e:
+            raise ValueError(
+                f"Impossible de lire le fichier MALS : {mals_path} — {_e}"
+            ) from _e
         _validate(mals_doc, "mals-log.schema.json", schemas_dir)
         session_id = mals_doc.get("session_id", "")
         mals_dest_name = f"mals-{session_id}.json" if session_id else "mals-log.json"

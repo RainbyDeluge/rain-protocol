@@ -26,6 +26,11 @@ if [[ $# -ne 1 ]]; then
     exit 1
 fi
 
+# M1 — validate before cd (same guard as sign-bundle.sh / timestamp-bundle.sh).
+if [[ ! -d "$1" ]]; then
+    printf 'Error: bundle directory not found: %s\n' "$1" >&2
+    exit 1
+fi
 BUNDLE_DIR="$(cd "$1" && pwd)"
 
 # ── Pre-flight: PKI ───────────────────────────────────────────────────────────
@@ -54,10 +59,14 @@ MANIFEST_REF="$(python3 -c "
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
-    print(d['manifest_ref'])
-except (KeyError, Exception) as e:
-    sys.stderr.write(f'Error: {e}\n')
-    sys.exit(1)
+except json.JSONDecodeError as e:
+    sys.stderr.write(f'Error: bundle-index.json is not valid JSON: {e}\n'); sys.exit(1)
+# M2 — explicit message instead of raw KeyError repr.
+ref = d.get('manifest_ref')
+if not ref:
+    sys.stderr.write(\"Error: 'manifest_ref' key missing from bundle-index.json — \")
+    sys.stderr.write('is this a valid RAIN bundle directory?\n'); sys.exit(1)
+print(ref)
 " "${INDEX_FILE}")"
 
 MANIFEST_FILE="${BUNDLE_DIR}/${MANIFEST_REF}"

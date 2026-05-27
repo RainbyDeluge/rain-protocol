@@ -55,6 +55,11 @@ if [[ $# -ne 1 ]]; then
     exit 1
 fi
 
+# M1 — validate before cd (same guard as prepare-p2.sh / sign-bundle.sh).
+if [[ ! -d "$1" ]]; then
+    printf 'Error: bundle directory not found: %s\n' "$1" >&2
+    exit 1
+fi
 BUNDLE_DIR="$(cd "$1" && pwd)"
 
 # ── Pre-flight: TSA certificates ──────────────────────────────────────────────
@@ -84,9 +89,14 @@ MANIFEST_REF="$(python3 -c "
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
-    print(d['manifest_ref'])
-except (KeyError, Exception) as e:
-    sys.stderr.write(f'Error: {e}\n'); sys.exit(1)
+except json.JSONDecodeError as e:
+    sys.stderr.write(f'Error: bundle-index.json is not valid JSON: {e}\n'); sys.exit(1)
+# M2 — explicit message instead of raw KeyError repr.
+ref = d.get('manifest_ref')
+if not ref:
+    sys.stderr.write(\"Error: 'manifest_ref' key missing from bundle-index.json — \")
+    sys.stderr.write('is this a valid RAIN bundle directory?\n'); sys.exit(1)
+print(ref)
 " "${INDEX_FILE}")"
 
 MANIFEST_FILE="${BUNDLE_DIR}/${MANIFEST_REF}"
@@ -160,7 +170,14 @@ echo "[4/5] Verifying timestamp token..."
 _verify_cmd=(openssl ts -verify -digest "${MANIFEST_HASH}" -sha256 -in "${TSR_FILE}" -CAfile "${TSA_CA}")
 [[ -n "${TSA_CERT}" ]] && _verify_cmd+=(-untrusted "${TSA_CERT}")
 if ! "${_verify_cmd[@]}" > /dev/null 2>&1; then
-    printf 'Error: timestamp token verification failed\n' >&2
+    # M3 — add actionable diagnostics: the bare "verification failed" gave no
+    # indication of cause (wrong cert, wrong URL, corrupt token, network issue).
+    printf 'Error: timestamp token verification failed.\n' >&2
+    printf '  Possible causes:\n' >&2
+    printf '    1. TSA certificate mismatch — current TSA: %s\n' "${TSA_LABEL}" >&2
+    printf '       Re-fetch certs: bash scripts/get-tsa-cert.sh\n' >&2
+    printf '    2. Wrong TSA URL — override: RAIN_TSA_URL=https://freetsa.org/tsr bash scripts/timestamp-bundle.sh %s\n' "$1" >&2
+    printf '    3. Corrupt TSR — delete %s and retry\n' "${TSR_FILE}" >&2
     exit 1
 fi
 echo "  Token verified OK"

@@ -37,10 +37,23 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -*)
+            # M7 — show usage alongside the unknown option so the user knows
+            # what options are valid without having to re-read the script header.
             printf 'Unknown option: %s\n' "$1" >&2
+            printf 'Usage: %s [--json] [--c2pa <image>] <bundle-dir|bundle.zip>\n' \
+                "$(basename "$0")" >&2
             exit 1
             ;;
         *)
+            # m4 — reject a second positional argument immediately; previously the
+            # last one silently won and the first was quietly discarded.
+            if [[ -n "$BUNDLE_DIR" ]]; then
+                printf 'Erreur : argument inattendu : %s (chemin bundle déjà défini : %s)\n' \
+                    "$1" "$BUNDLE_DIR" >&2
+                printf 'Usage : %s [--json] [--c2pa <image>] <bundle-dir|bundle.zip>\n' \
+                    "$(basename "$0")" >&2
+                exit 1
+            fi
             BUNDLE_DIR="$1"
             shift
             ;;
@@ -260,7 +273,10 @@ if [[ "$STEP1_PASS" == true ]]; then
 
         actual=""
         actual="$(py_hash "$FPATH" 2>/dev/null)" || {
-            add_error "HASH_MISMATCH: ${fname} (could not read file)"
+            # C3 — file present in manifest but physically absent or unreadable:
+            # this is a structure/integrity failure, NOT a hash mismatch.
+            # Using HASH_MISMATCH here would give a forensically incorrect error code.
+            add_error "STRUCTURE_MISSING: ${fname} (declared in manifest but absent or unreadable)"
             STEP2_PASS=false
             continue
         }
@@ -403,8 +419,25 @@ fi
 # ── STEP 4: Proof level coherence ─────────────────────────────────────────────
 _section "STEP 4 — Proof level"
 
-if [[ "$STEP3_PASS" == true ]]; then
+# m7 — read proof_level once, before the STEP3_PASS branch, so both the
+# signature-check path (STEP3_PASS=true) and the JSON-output-only path
+# (STEP3_PASS=false) share the same value.  The old code had two slightly
+# different reads with different fallback logic — a fragile duplication.
+if [[ -n "$MANIFEST_FILE" && -f "$MANIFEST_FILE" ]]; then
     DECLARED_LEVEL="$(py_get_str "$MANIFEST_FILE" "proof_level" 2>/dev/null)" || DECLARED_LEVEL="unknown"
+else
+    DECLARED_LEVEL="unknown"
+fi
+
+if [[ "$STEP3_PASS" == true ]]; then
+    # C6 — proof_level absent is a structural defect: a manifest without a declared
+    # level cannot be treated as P1.  jsonschema catches this when installed; the
+    # structural fallback may not — so we guard explicitly here.
+    if [[ "$DECLARED_LEVEL" == "unknown" ]]; then
+        add_downgrade "PROOF_LEVEL_MISSING: proof_level absent from manifest — cannot determine proof level; effective level forced to P1"
+        DECLARED_LEVEL="P1"
+    fi
+
     _ok "Declared level: ${DECLARED_LEVEL}"
 
     if [[ "$DECLARED_LEVEL" == "P2" || "$DECLARED_LEVEL" == "P3" ]]; then
@@ -483,10 +516,7 @@ if [[ "$STEP3_PASS" == true ]]; then
         _ok "P1 — no signature required"
     fi
 else
-    # Still try to read declared level for JSON output, even if steps failed
-    if [[ -n "$MANIFEST_FILE" && -f "$MANIFEST_FILE" ]]; then
-        DECLARED_LEVEL="$(py_get_str "$MANIFEST_FILE" "proof_level" 2>/dev/null)" || DECLARED_LEVEL="unknown"
-    fi
+    # proof_level already read above (m7 — shared single read).
     _info "skipped — prior steps failed"
 fi
 
