@@ -1,0 +1,11 @@
+{
+  "purpose": "Œuvre 'L'Émotion de l'IA' par Le O — composition pixel-art minimaliste sur fond noir mettant en tension un cœur pixellisé minuscule (magenta #E91E8C) et un grand cerveau pixellisé dominant (cyan #00E5FF), arrière-plan de code binaire déstructuré (or #FFB800) et accents blancs. L'opposition taille/position représente la tension fondamentale entre l'émotion et le calcul dans l'IA — le sentiment contre la machine. Palette Deluge : noir, magenta, or, cyan, blanc. Session de conception capturée en MALS session-signed avec ancrage DigiCert RFC 3161, image générée via gpt-image-1.",
+  "human_role": "auteur",
+  "ai_tools_used": [
+    "gpt-image-1",
+    "gpt-4o-mini"
+  ],
+  "review_performed": true,
+  "disclosure_scope": "public",
+  "intent_timing": "PRE"
+}

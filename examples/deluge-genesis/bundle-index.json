@@ -1,0 +1,5 @@
+{
+  "manifest_ref": "manifest.json",
+  "intent_ref": "intent.json",
+  "policy_ref": "policy.json"
+}

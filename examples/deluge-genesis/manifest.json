@@ -1,0 +1,46 @@
+{
+  "rain_version": "0.1.0",
+  "bundle_id": "1e51cafb-dedf-4d51-ac9b-ca6bccdea86d",
+  "created_at": "2026-05-27T01:29:35Z",
+  "proof_level": "P2",
+  "files": [
+    {
+      "name": "emotion-ia.png",
+      "sha256": "56be162054a30d121ce6c8d7ca58417d96098b4a4a2ea6b6df19ec33bf9da7b9",
+      "sha3_256": "316060a1e432bdc8239ed268efaeaf9faa8081dfe217fce30948aef02c527b1c",
+      "role": "artwork"
+    },
+    {
+      "name": "intent.json",
+      "sha256": "fa9306a8760cc1c7c6daae1582b6950fa55c75683122bcbb410ec35744233b0d",
+      "sha3_256": "af16bcbcbaa4d63dadd3dc3df0d51dddfe987c7591c90a2720c9ddfefec96cef",
+      "role": "intent"
+    },
+    {
+      "name": "policy.json",
+      "sha256": "ef6d02218cf719b4f1b0b308e60f9fcb8e40c00dee557e59830947636a5e32b7",
+      "sha3_256": "2c3483ce45396e1bcb17072e5f9b39c3e2f3fc6b2e2d76204f48a8fd40e90d29",
+      "role": "policy"
+    },
+    {
+      "name": "mals-4fbdfb85-99e7-4499-b032-ca3494f5ac97.json",
+      "sha256": "75f6f1f21dd30bc5e8bace5b282951b6a0623448db27f3902d3651bcaa850a94",
+      "sha3_256": "134a4c35a57dca4a640cacfdde41edc71e00c35a38a2f8de2634bf3c25b2a7ed",
+      "role": "mals-log"
+    },
+    {
+      "name": "signer-cert.pem",
+      "sha256": "75102a344b6aef8de768d127f962ea8e5734a031952130833cc1cf68be43ba2c",
+      "sha3_256": "e6e690d152ffefe073bd0d84dd003e537126a090b25453da8fc8d16d8e6e8a19",
+      "role": "certificate"
+    },
+    {
+      "name": "manifest.tsr",
+      "sha256": "7c82afa6fe722142bda3ea7b9b1d8e8c00338b4779226befe42c72e36217aee9",
+      "sha3_256": "cf5e7fe68c6030f252d02e1553e71edc4caec88484f2a1f2ac6ae1ff67598ac1",
+      "role": "timestamp"
+    }
+  ],
+  "signer_cert_fingerprint": "fb58299300fb5271da88b92847db3dee9936bbb346ddb8fe9e28048b989713b7",
+  "timestamp_anchor_sha256": "fc28c5c9a6e916728e6350d1d916616a5ad426a7036f58624ca0c18d63a4e9e2"
+}
