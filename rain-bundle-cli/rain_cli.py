@@ -53,10 +53,16 @@ def main() -> None:
                    choices=["private", "internal", "public"],
                    default="public",
                    help="Intended disclosure scope (default: public)")
-    p.add_argument("--level", choices=["P1", "P2"], default="P1",
-                   help="Proof level: P1=declarative, P2=signed (default: P1)")
+    p.add_argument("--level", choices=["P1", "P2", "P3"], default="P1",
+                   help="Proof level: P1=declarative, P2=signed (RAIN key), P3=BYOK/HYOK (artist key) (default: P1)")
     p.add_argument("--no-timestamp", action="store_true", dest="no_timestamp",
-                   help="Skip RFC 3161 timestamping when using --level P2")
+                   help="Skip RFC 3161 timestamping when using --level P2 or P3")
+    p.add_argument("--artist-key", type=Path, default=None, dest="artist_key", metavar="FILE",
+                   help="[P3 uniquement] Chemin vers la clé privée Ed25519 de l'artiste (artist-key.pem). "
+                        "HYOK : cette clé n'est jamais transmise à RAIN ; elle signe localement.")
+    p.add_argument("--artist-cert", type=Path, default=None, dest="artist_cert", metavar="FILE",
+                   help="[P3 uniquement] Chemin vers le certificat auto-signé de l'artiste (artist-cert.pem). "
+                        "Ce fichier (clé publique uniquement) est intégré dans le bundle.")
     p.add_argument("--mals", type=Path, default=None, metavar="FILE",
                    help="Path to a MALS session log (JSON) to embed in the bundle. "
                         "Validated against mals-log.schema.json before integration; "
@@ -82,12 +88,38 @@ def main() -> None:
         print(f"Erreur : fichier MALS introuvable : {mals}", file=sys.stderr)
         sys.exit(1)
 
-    # M6 — --no-timestamp is only meaningful with --level P2.  Silently ignoring
-    # it with P1 could mislead the user into thinking timestamping was suppressed.
-    if args.no_timestamp and args.level != "P2":
+    # ── Validation des options P3 ─────────────────────────────────────────────
+    artist_key  = args.artist_key.resolve()  if args.artist_key  else None
+    artist_cert = args.artist_cert.resolve() if args.artist_cert else None
+
+    if args.level == "P3":
+        if artist_key is None or artist_cert is None:
+            print(
+                "Erreur : --level P3 requiert --artist-key <clé> et --artist-cert <cert>.\n"
+                "  Générez une paire de clés artiste avec :\n"
+                "    bash scripts/gen-artist-key.sh <nom> <dossier>",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not artist_key.exists():
+            print(f"Erreur : clé artiste introuvable : {artist_key}", file=sys.stderr)
+            sys.exit(1)
+        if not artist_cert.exists():
+            print(f"Erreur : certificat artiste introuvable : {artist_cert}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        if artist_key is not None or artist_cert is not None:
+            print(
+                "Avertissement : --artist-key et --artist-cert sont ignorés avec --level "
+                f"{args.level} (P3 uniquement).",
+                file=sys.stderr,
+            )
+
+    # M6 — --no-timestamp is only meaningful with --level P2 or P3.
+    if args.no_timestamp and args.level not in ("P2", "P3"):
         print(
             "Avertissement : --no-timestamp sans effet avec --level P1 "
-            "(l'horodatage RFC 3161 ne s'applique qu'aux bundles P2).",
+            "(l'horodatage RFC 3161 ne s'applique qu'aux bundles P2 et P3).",
             file=sys.stderr,
         )
 
@@ -99,10 +131,14 @@ def main() -> None:
     print(f"  artwork  : {artwork.name}")
     print(f"  output   : {output}")
     print(f"  level    : {args.level}", end="")
-    if args.level == "P2":
+    if args.level in ("P2", "P3"):
         ts_label = "no (--no-timestamp)" if args.no_timestamp else "yes (freetsa.org RFC 3161)"
         print(f"  |  timestamp: {ts_label}", end="")
     print()
+    if args.level == "P3":
+        print(f"  artist-key  : {artist_key}")
+        print(f"  artist-cert : {artist_cert}")
+        print("  [HYOK] la clé privée artiste n'est jamais transmise à RAIN")
     if ai_tools:
         print(f"  ai-tools : {', '.join(ai_tools)}")
     if mals:
@@ -123,6 +159,8 @@ def main() -> None:
             no_timestamp=args.no_timestamp,
             repo_root=REPO_ROOT,
             mals_path=mals,
+            artist_key_path=artist_key,
+            artist_cert_path=artist_cert,
         )
     except RuntimeError as exc:
         print(f"\nErreur : {exc}", file=sys.stderr)

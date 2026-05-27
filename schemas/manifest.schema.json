@@ -11,14 +11,26 @@
     "proof_level",
     "files"
   ],
-  "if": {
-    "properties": {
-      "proof_level": { "enum": ["P2", "P3"] }
+  "allOf": [
+    {
+      "$comment": "signer_cert_fingerprint requis pour P2 et P3 (preuve cryptographique).",
+      "if": {
+        "properties": { "proof_level": { "enum": ["P2", "P3"] } }
+      },
+      "then": {
+        "required": ["signer_cert_fingerprint"]
+      }
+    },
+    {
+      "$comment": "signer_identity_class requis pour P3 uniquement (BYOK/HYOK). En P2, la classe est implicitement 'platform' (clé RAIN gérée par le SDK). En P3, la valeur déclarée détermine le niveau d'assurance identitaire affiché par le vérificateur.",
+      "if": {
+        "properties": { "proof_level": { "const": "P3" } }
+      },
+      "then": {
+        "required": ["signer_identity_class"]
+      }
     }
-  },
-  "then": {
-    "required": ["signer_cert_fingerprint"]
-  },
+  ],
   "properties": {
     "rain_version": {
       "type": "string",
@@ -40,6 +52,11 @@
       "type": "string",
       "description": "Niveau de preuve déclaré du bundle. P1 = déclaratif (confiance minimale, aucune preuve cryptographique de session). P2 = signé (SDK RAIN capture et signe chaque étape en temps réel). P3 = souverain (BYOK/HYOK, RAIN ne voit que le hash signé, attestation produite côté client). Le niveau effectif peut être inférieur au niveau déclaré (DOWNGRADE, exit code 2).",
       "enum": ["P1", "P2", "P3"]
+    },
+    "signer_identity_class": {
+      "type": "string",
+      "description": "Classe d'assurance identitaire du signataire. Requis en P3 ; optionnel et implicitement 'platform' en P2. Sémantique normative des valeurs : 'platform' — clé gérée par l'infrastructure RAIN (P2 standard) ; 'self-signed' — certificat auto-signé fourni par l'artiste (P3-A HYOK) : la signature est CRYPTOGRAPHIQUEMENT VALIDE pour le certificat fourni, mais aucune autorité de confiance n'atteste l'identité associée à cette clé — le vérificateur DOIT afficher un avertissement identitaire explicite et NE DOIT PAS émettre un verdict VALID sans mention IDENTITY_UNVERIFIED ; 'delegated-ca' — certificat émis par une CA déléguée RAIN (P3-B futur) ; 'qualified-ca' — certificat qualifié eIDAS ou équivalent (P3-C futur, niveau probatoire maximal).",
+      "enum": ["platform", "self-signed", "delegated-ca", "qualified-ca"]
     },
     "files": {
       "type": "array",
@@ -91,10 +108,10 @@
     },
     "timestamp_anchor_sha256": {
       "type": "string",
-      "description": "Digest d'ancrage du timestamp RFC 3161 : SHA-256 hexadécimal du manifest dans son état P2-ready AVANT l'insertion de l'entrée manifest.tsr dans files[]. Ce champ est une donnée historique attestée — non recalculable depuis le manifest final — dont la véracité est garantie conjointement par l'attestation TSA (qui scelle exactement ce digest) et par la signature Ed25519 qui couvre l'intégralité du manifest incluant ce champ. Source unique de vérité (SSOT) pour la vérification du timestamp ; absent sur les bundles sans horodatage qualifié.",
+      "description": "Digest d'ancrage du timestamp RFC 3161 : SHA-256 hexadécimal du manifest dans son état P2/P3-ready AVANT l'insertion de l'entrée manifest.tsr dans files[]. Ce champ est une donnée historique attestée — non recalculable depuis le manifest final — dont la véracité est garantie conjointement par l'attestation TSA (qui scelle exactement ce digest) et par la signature Ed25519 qui couvre l'intégralité du manifest incluant ce champ. Source unique de vérité (SSOT) pour la vérification du timestamp ; absent sur les bundles sans horodatage qualifié.",
       "pattern": "^[0-9a-f]{64}$"
     }
   },
   "additionalProperties": false,
-  "$comment": "draft-07 fallback: remplacer '$schema' par 'http://json-schema.org/draft-07/schema#'. La contrainte if/then/else (signer_cert_fingerprint conditionnel selon proof_level) est supportée depuis draft-07. Le mot-clé 'format' reste annotatif dans les deux drafts ; valider 'bundle_id' via le pattern regex si le validateur ne supporte pas format:uuid."
+  "$comment": "draft-07 fallback: remplacer '$schema' par 'http://json-schema.org/draft-07/schema#'. Les contraintes allOf/if/then (signer_cert_fingerprint conditionnel selon proof_level, signer_identity_class conditionnel pour P3) sont supportées depuis draft-07. Le mot-clé 'format' reste annotatif dans les deux drafts ; valider 'bundle_id' via le pattern regex si le validateur ne supporte pas format:uuid."
 }

@@ -105,6 +105,8 @@ FINAL_STATUS="VALID"
 MANIFEST_FILE=""
 TIMESTAMP_STATUS="absent"
 TIMESTAMP_DATE=""
+IDENTITY_CLASS=""
+IDENTITY_UNVERIFIED=false
 
 # ── Display helpers ───────────────────────────────────────────────────────────
 
@@ -440,6 +442,40 @@ if [[ "$STEP3_PASS" == true ]]; then
 
     _ok "Declared level: ${DECLARED_LEVEL}"
 
+    # ── P3 identity class ──────────────────────────────────────────────────
+    # Read signer_identity_class for P3 bundles.  This is mandatory and determines
+    # the identity assurance level displayed in the verdict.
+    # CRITICAL: a simple VALID must NEVER be emitted for P3 self-signed without
+    # the IDENTITY_UNVERIFIED mention.  The verdict must be honest.
+    if [[ "$DECLARED_LEVEL" == "P3" ]]; then
+        IDENTITY_CLASS="$(py_get_str "$MANIFEST_FILE" "signer_identity_class" 2>/dev/null)" \
+            || IDENTITY_CLASS=""
+        case "$IDENTITY_CLASS" in
+            "self-signed")
+                # P3-A HYOK: signature is cryptographically valid for the provided cert,
+                # but no recognised CA attests the identity behind the public key.
+                # This is NOT a downgrade — it is an inherent property of self-signed certs.
+                # The verifier MUST display IDENTITY_UNVERIFIED; it MUST NOT emit a simple VALID.
+                IDENTITY_UNVERIFIED=true
+                WARNINGS+=("IDENTITY_UNVERIFIED: signer_identity_class=self-signed — signature cryptographiquement valide, identité non attestée par une CA reconnue")
+                _warn "P3 HYOK — IDENTITY_UNVERIFIED : certificat auto-signé"
+                _info "La signature prouve l'intention ; elle ne prouve pas l'identité du signataire."
+                ;;
+            "platform")
+                _warn "IDENTITY_ANOMALY: signer_identity_class='platform' inattendu en P3"
+                ;;
+            "delegated-ca"|"qualified-ca")
+                add_downgrade "PROOF_DOWNGRADE: signer_identity_class='${IDENTITY_CLASS}' non supporté en v0"
+                ;;
+            "")
+                add_downgrade "PROOF_DOWNGRADE: signer_identity_class manquant en P3"
+                ;;
+            *)
+                add_downgrade "PROOF_DOWNGRADE: signer_identity_class='${IDENTITY_CLASS}' inconnu"
+                ;;
+        esac
+    fi
+
     if [[ "$DECLARED_LEVEL" == "P2" || "$DECLARED_LEVEL" == "P3" ]]; then
 
         # ── 1. manifest.sig ────────────────────────────────────────────────
@@ -497,17 +533,31 @@ if [[ "$STEP3_PASS" == true ]]; then
                 fi
 
                 # ── 5. CA chain verification ────────────────────────────────
-                # Downgrade (not INVALID): CA may legitimately be unavailable at verify time.
-                _CA_CERT="${REPO_ROOT}/pki/ca-cert.pem"
-                if [[ -f "$_CA_CERT" ]]; then
-                    if openssl verify -CAfile "$_CA_CERT" "$_CERT_FILE" \
+                if [[ "$DECLARED_LEVEL" == "P3" && "$IDENTITY_CLASS" == "self-signed" ]]; then
+                    # P3 HYOK self-signed: do NOT check against the RAIN CA.
+                    # The cert is self-signed by design; checking it against pki/ would
+                    # always fail (that's the whole point of HYOK).
+                    # We verify the cert is structurally valid (self-verifies) instead.
+                    if openssl verify -CAfile "$_CERT_FILE" "$_CERT_FILE" \
                            > /dev/null 2>&1; then
-                        _ok "CA chain verified"
+                        _ok "Certificat auto-signé structurellement valide (P3 HYOK)"
                     else
-                        add_downgrade "CHAIN_UNTRUSTED: signer cert not signed by known CA"
+                        add_downgrade "CERT_SELF_VERIFY_FAILED: certificat malformé ou non auto-signé"
                     fi
                 else
-                    _warn "CHAIN_UNVERIFIED: no CA available, signature authenticity not anchored"
+                    # P2 or other P3 variant: verify against RAIN CA.
+                    # Downgrade (not INVALID): CA may legitimately be unavailable at verify time.
+                    _CA_CERT="${REPO_ROOT}/pki/ca-cert.pem"
+                    if [[ -f "$_CA_CERT" ]]; then
+                        if openssl verify -CAfile "$_CA_CERT" "$_CERT_FILE" \
+                               > /dev/null 2>&1; then
+                            _ok "CA chain verified"
+                        else
+                            add_downgrade "CHAIN_UNTRUSTED: signer cert not signed by known CA"
+                        fi
+                    else
+                        _warn "CHAIN_UNVERIFIED: no CA available, signature authenticity not anchored"
+                    fi
                 fi
             fi
         fi
@@ -716,6 +766,8 @@ if [[ "$JSON_MODE" == true ]]; then
         (( ${#WARNINGS[@]} > 0 )) && printf '%s\n' "${WARNINGS[@]}" || true
         printf '%s\n' "${TIMESTAMP_STATUS}"
         printf '%s\n' "${TIMESTAMP_DATE}"
+        printf '%s\n' "${IDENTITY_CLASS}"
+        printf '%s\n' "${IDENTITY_UNVERIFIED}"
     } | python3 -c "
 import json, sys
 lines = sys.stdin.read().splitlines()
@@ -728,7 +780,9 @@ errors    = lines[i:i+ne]; i += ne
 nw        = int(lines[i]); i += 1
 warnings  = lines[i:i+nw]; i += nw
 ts_status = lines[i]; i += 1
-ts_date   = lines[i] if i < len(lines) else ''
+ts_date   = lines[i] if i < len(lines) else ''; i += 1
+identity_class    = lines[i] if i < len(lines) else ''; i += 1
+identity_unverified_str = lines[i] if i < len(lines) else 'false'
 out = {
     'status':           status,
     'declared_level':   declared,
@@ -739,13 +793,25 @@ out = {
 }
 if ts_date:
     out['timestamp_date'] = ts_date
+if identity_class:
+    out['identity_class'] = identity_class
+if identity_unverified_str == 'true':
+    out['identity_unverified'] = True
 print(json.dumps(out, indent=2, ensure_ascii=False))
 "
 else
     printf '\n'
     case "$FINAL_STATUS" in
         VALID)
-            printf '\033[32mRESULT: VALID [%s]\033[0m\n' "$EFFECTIVE_LEVEL"
+            if [[ "$IDENTITY_UNVERIFIED" == true ]]; then
+                # CRITICAL: never display a simple VALID for P3 self-signed.
+                # The honest verdict MUST include the identity caveat.
+                printf '\033[32mRESULT: VALID [%s_SELF_SIGNED_IDENTITY_UNVERIFIED]\033[0m\n' \
+                    "$EFFECTIVE_LEVEL"
+                printf "\033[33m\xe2\x9a\xa0 IDENTITY_UNVERIFIED: self-signed cert — signature valid, identity unattested by any CA\033[0m\n"
+            else
+                printf '\033[32mRESULT: VALID [%s]\033[0m\n' "$EFFECTIVE_LEVEL"
+            fi
             ;;
         DOWNGRADE)
             printf '\033[33mRESULT: DOWNGRADE (declared %s → effective %s)\033[0m\n' \

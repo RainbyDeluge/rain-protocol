@@ -55,6 +55,25 @@ def _run_script(script: Path, bundle_dir: Path, label: str) -> None:
         raise RuntimeError(f"{label} exited {rc} — see output above")
 
 
+def _run_script_args(script: Path, args: list, label: str) -> None:
+    """Run a shell script with an explicit argument list; raise RuntimeError on non-zero exit."""
+    print(f"\n── {label} " + "─" * max(1, 60 - len(label)), flush=True)
+    rc = subprocess.run(["bash", str(script)] + [str(a) for a in args]).returncode
+    if rc != 0:
+        raise RuntimeError(f"{label} exited {rc} — see output above")
+
+
+def _run_script_env(script: Path, bundle_dir: Path, label: str, env: dict) -> None:
+    """Run a shell script on bundle_dir with extra environment variables."""
+    import os
+    print(f"\n── {label} " + "─" * max(1, 60 - len(label)), flush=True)
+    run_env = os.environ.copy()
+    run_env.update(env)
+    rc = subprocess.run(["bash", str(script), str(bundle_dir)], env=run_env).returncode
+    if rc != 0:
+        raise RuntimeError(f"{label} exited {rc} — see output above")
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def zip_bundle(output_dir: Path, bundle_id: str) -> Path:
@@ -84,6 +103,8 @@ def create_bundle(
     no_timestamp: bool,
     repo_root: Path,
     mals_path: Path | None = None,
+    artist_key_path: Path | None = None,
+    artist_cert_path: Path | None = None,
 ) -> int:
     """
     Create a RAIN evidence bundle and return the exit code of verify.sh.
@@ -186,7 +207,7 @@ def create_bundle(
     _write_json(output_dir / "bundle-index.json", index)
     print("  created : bundle-index.json", flush=True)
 
-    # ── 7. P2 pipeline ─────────────────────────────────────────────────────────
+    # ── 7. P2 / P3 pipeline ────────────────────────────────────────────────────
     if level == "P2":
         _run_script(scripts_dir / "prepare-p2.sh",      output_dir, "prepare-p2.sh")
         if not no_timestamp:
@@ -194,6 +215,29 @@ def create_bundle(
         else:
             print("\n── timestamp-bundle.sh skipped (--no-timestamp) " + "─" * 13, flush=True)
         _run_script(scripts_dir / "sign-bundle.sh",     output_dir, "sign-bundle.sh")
+
+    elif level == "P3":
+        # P3 BYOK/HYOK: artist key stays local; RAIN only sees the certificate.
+        if artist_cert_path is None or artist_key_path is None:
+            raise ValueError(
+                "Les chemins artist_key_path et artist_cert_path sont requis pour --level P3."
+            )
+        _run_script_args(
+            scripts_dir / "prepare-p3.sh",
+            [output_dir, artist_cert_path],
+            "prepare-p3.sh",
+        )
+        if not no_timestamp:
+            _run_script(scripts_dir / "timestamp-bundle.sh", output_dir, "timestamp-bundle.sh")
+        else:
+            print("\n── timestamp-bundle.sh skipped (--no-timestamp) " + "─" * 13, flush=True)
+        # Sign with the artist key via RAIN_SIGNER_KEY env var (HYOK guarantee).
+        _run_script_env(
+            scripts_dir / "sign-bundle.sh",
+            output_dir,
+            "sign-bundle.sh (P3 HYOK)",
+            env={"RAIN_SIGNER_KEY": str(artist_key_path)},
+        )
 
     # ── 8. Verify ──────────────────────────────────────────────────────────────
     print("\n── verify.sh " + "─" * 48, flush=True)

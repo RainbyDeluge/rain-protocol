@@ -217,6 +217,10 @@ __marimo__/
 # PKI — private keys must never be committed
 pki/
 
+# Artist keys (P3 HYOK) — NEVER commit private keys
+# Dossier conventionnel ; les artistes peuvent stocker leurs clés ailleurs.
+artist-keys/
+
 # C2PA bridge — private key generated from RAIN CA, never commit
 c2pa-bridge/*-key.pem
 c2pa-bridge/*.png

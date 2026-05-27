@@ -24,7 +24,59 @@ Le droit d'auteur 2026 et l'AI Act européen exigent de documenter le contrôle 
 
 - **P1 (déclaratif).** L'auteur déclare son processus ; le bundle contient intent, policy et hashes. Pas de signature cryptographique. Valeur : attestation de bonne foi horodatée.
 - **P2 (signé).** Le manifest est signé Ed25519 par une clé RAIN, optionnellement horodaté RFC 3161. Valeur probatoire : falsification détectable.
-- **P3 (BYOK/HYOK, clés contrôlées par le client).** L'auteur apporte sa propre clé de signature ; RAIN ne voit que les hashes signés. Valeur probatoire maximale ; non encore implémenté en v0.
+- **P3 (BYOK/HYOK, clés contrôlées par le client).** L'auteur apporte sa propre clé de signature ; RAIN ne voit que le certificat (clé publique) et les hashes. La valeur probatoire est maximale pour la signature, mais l'identité du signataire n'est pas attestée par une CA reconnue (voir P3-A ci-dessous).
+
+---
+
+## P3 — BYOK/HYOK (clé artiste auto-signée)
+
+### Garanties P3-A (v0)
+
+| Propriété | Valeur |
+|---|---|
+| Intégrité | Double empreinte SHA-256 + SHA3-256 sur tous les fichiers |
+| Signature | Ed25519 avec la clé privée de l'artiste — RAIN ne voit jamais cette clé |
+| HYOK | La clé privée ne quitte jamais la machine de l'artiste |
+| Identité | **NON VÉRIFIÉE** — certificat auto-signé, aucune CA ne confirme l'identité |
+| Verdict | `VALID [P3_SELF_SIGNED_IDENTITY_UNVERIFIED]` — jamais un simple VALID |
+
+### Ce que P3-A garantit / ne garantit pas
+
+**Garanti :** la signature prouve que le fichier manifest.json n'a pas été modifié depuis la création du bundle. Quiconque dispose du certificat artiste peut vérifier l'intégrité cryptographique.
+
+**Non garanti :** l'identité derrière le certificat. Un certificat auto-signé n'est attesté par personne ; l'artiste a pu en générer un au nom de n'importe qui. Le vérificateur RAIN affiche **toujours** `IDENTITY_UNVERIFIED` et ne masque jamais cette limitation.
+
+### Créer un bundle P3
+
+```bash
+# 1. Générer la paire de clés artiste (à faire une seule fois)
+bash scripts/gen-artist-key.sh "Alice Martin" artist-keys/
+#    → artist-keys/artist-key.pem   (CONFIDENTIELLE — jamais transmettre, jamais committer)
+#    → artist-keys/artist-cert.pem  (publique — intégrée dans le bundle)
+
+# 2. Créer le bundle P3
+cd rain-bundle-cli
+python3 rain_cli.py create \
+  --artwork    /chemin/vers/oeuvre.png \
+  --output     ../mon-bundle-p3 \
+  --purpose    "Illustration générée sous ma direction" \
+  --level      P3 \
+  --artist-key  ../artist-keys/artist-key.pem \
+  --artist-cert ../artist-keys/artist-cert.pem
+
+# 3. Vérifier
+bash scripts/verify.sh ../mon-bundle-p3/
+# → RESULT: VALID [P3_SELF_SIGNED_IDENTITY_UNVERIFIED]
+```
+
+### Évolution prévue
+
+- **P3-B (delegated-ca)** : certificat émis par une CA déléguée RAIN — l'identité est attestée par un tiers de confiance intermédiaire.
+- **P3-C (qualified-ca)** : certificat qualifié eIDAS (ou équivalent) — niveau probatoire maximal, valeur légale.
+
+Ces niveaux supérieurs ne modifient pas le format de bundle ni le pipeline de signing ; seule la racine de confiance du certificat change. Le champ `signer_identity_class` dans le manifest reflète le niveau déclaré ; le vérificateur adapte le verdict en conséquence.
+
+> **Référence :** voir DISCLAIMER art. 2.6 pour les limites de la responsabilité RAIN concernant l'assurance identitaire en P3-A.
 
 ---
 
@@ -130,7 +182,7 @@ bash scripts/test-verify.sh
 | Chemin | Contenu |
 |---|---|
 | `schemas/` | Schémas JSON Draft 2020-12 : `manifest`, `intent`, `policy`, `bundle-index`, `mals-log` |
-| `scripts/` | Pipeline Bash : `gen-ca.sh`, `prepare-p2.sh`, `timestamp-bundle.sh`, `sign-bundle.sh`, `verify.sh`, `test-verify.sh`, `c2pa-embed.sh` |
+| `scripts/` | Pipeline Bash : `gen-ca.sh` (PKI P2), `gen-artist-key.sh` (clé artiste P3), `prepare-p2.sh`, `prepare-p3.sh`, `timestamp-bundle.sh`, `sign-bundle.sh`, `verify.sh`, `test-verify.sh`, `test-p3.sh`, `c2pa-embed.sh` |
 | `rain-bundle-cli/` | CLI Python : `rain_cli.py` (bundles), `mals_cli.py` (capture MALS multi-fournisseur) |
 | `web/` | `verify.html`, vérificateur WebCrypto hors ligne, sans serveur |
 | `c2pa-bridge/` | Clé et certificat de signature C2PA, template de manifest avec assertion `rain.bundle` |
@@ -159,7 +211,7 @@ Ces limites sont connues et documentées. Elles n'affectent pas la logique crypt
 
 - **CA auto-signée.** La CA générée par `gen-ca.sh` n'est pas ancrée dans un trust store reconnu (Mozilla, Apple, Microsoft). La chaîne `CA → signer` se vérifie avec `openssl verify -CAfile pki/ca-cert.pem`, mais elle ne sera pas acceptée automatiquement par des navigateurs ou des outils tiers. L'ancrage dans une CA qualifiée eIDAS est prévu pour la production.
 - **TSA non qualifiée eIDAS.** Le service d'horodatage utilisé (freetsa.org) délivre des jetons RFC 3161 techniquement conformes et vérifiables par `openssl ts`, mais sans valeur légale équivalente à un service qualifié. Les mêmes mécanismes s'appliquent à une TSA qualifiée ; seul l'ancrage change.
-- **P3 non implémenté.** Le niveau BYOK/HYOK (clés contrôlées par le client) est défini dans le schéma et le glossaire ; son pipeline de capture n'est pas encore livré.
+- **P3-A implémenté, P3-B/C en attente.** Le niveau P3-A (certificat auto-signé, `signer_identity_class: self-signed`) est livré en v0 avec son pipeline complet. Les niveaux P3-B (delegated-ca) et P3-C (qualified-ca) sont définis dans le schéma et le glossaire ; leur pipeline n'est pas encore livré. Le vérificateur affiche `IDENTITY_UNVERIFIED` pour P3-A en toutes circonstances.
 - **Confiance API pour MALS.** En `attestation_class: post-session`, la fidélité entre les hashes du log et les échanges réels repose sur la bonne foi de l'implémentation cliente. Une `attestation_class: session-signed` (signature par itération en temps réel) est prévue pour P2 MALS.
 
 ---

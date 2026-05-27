@@ -48,6 +48,7 @@ run_suite "${SCRIPT_DIR}/test-verify.sh"         "test-verify.sh         — bun
 run_suite "${SCRIPT_DIR}/test-mals.sh"           "test-mals.sh           — capture MALS"
 run_suite "${SCRIPT_DIR}/test-c2pa.sh"           "test-c2pa.sh           — bridge C2PA"
 run_suite "${SCRIPT_DIR}/test-session-signer.sh" "test-session-signer.sh — session signer"
+run_suite "${SCRIPT_DIR}/test-p3.sh"             "test-p3.sh             — P3 HYOK self-signed"
 
 printf '\n══════════════════════════════════════════════════════\n'
 if (( TOTAL_SKIP > 0 )); then
