@@ -247,3 +247,12 @@ class DigiCertProvider(TimestampProvider):
             raise TimestampError(
                 f"Erreur inattendue lors de l'horodatage : {exc}"
             ) from exc
+
+
+def get_default_timestamp_provider() -> DigiCertProvider:
+    """Retourne le fournisseur TSA par défaut (DigiCert).
+
+    Utilisé par le capteur session-signed et les scripts qui ne spécifient pas
+    de TSA explicitement. Remplace freetsa.org comme défaut depuis v0.1.2.
+    """
+    return DigiCertProvider()

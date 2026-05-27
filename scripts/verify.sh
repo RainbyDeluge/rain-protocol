@@ -351,6 +351,47 @@ if [[ "$STEP2_PASS" == true ]]; then
             STEP3_PASS=false
         else
             _ok "${fname} (mals-log) valid"
+
+            # session-signed: verify Ed25519 chain + prev_sig_hash linkage
+            _ATTEST_CLASS=""
+            _ATTEST_CLASS="$(python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(d.get('attestation_class', ''))
+" "$full_path" 2>/dev/null)" || true
+
+            if [[ "$_ATTEST_CLASS" == "session-signed" ]]; then
+                _SS_CERT=""
+                while IFS=$'\t' read -r _ss_f _ss_s256 _ss_s3 _ss_role; do
+                    [[ -z "$_ss_f" ]] && continue
+                    [[ "$_ss_role" == "certificate" ]] && { _SS_CERT="${BUNDLE_DIR}/${_ss_f}"; break; }
+                done < <(py_get_files "$MANIFEST_FILE")
+
+                if [[ -z "$_SS_CERT" || ! -f "$_SS_CERT" ]]; then
+                    add_downgrade "MALS_CHAIN_UNVERIFIED: ${fname} — signer certificate absent, session-signed chain not verified"
+                else
+                    _chain_out=""
+                    _chain_rc=0
+                    _chain_out="$(PYTHONPATH="${REPO_ROOT}/rain-bundle-cli" python3 - \
+                        "$full_path" "$_SS_CERT" 2>&1 <<'PYEOF'
+import sys, json
+from rain.session_signer import verify_signed_chain
+log = json.load(open(sys.argv[1]))
+cert = open(sys.argv[2], "rb").read()
+result = verify_signed_chain(log.get("iterations", []), cert)
+if not result.valid:
+    print(f"seq={result.failed_seq}: {result.error}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+)" || _chain_rc=$?
+                    if (( _chain_rc != 0 )); then
+                        add_error "MALS_CHAIN_INVALID: ${fname} — ${_chain_out}"
+                        STEP3_PASS=false
+                    else
+                        _ok "${fname} (mals-log) session-signed chain verified"
+                    fi
+                fi
+            fi
         fi
     done < <(py_get_files "$MANIFEST_FILE")
 
@@ -491,37 +532,58 @@ if [[ "$STEP1_PASS" == true ]]; then
             else
                 _ok "Anchor digest (from signed manifest): ${_TS_DIGEST:0:16}…"
 
-                # 3. TSA certificates — their absence is a warning, not a failure.
-                _TSA_CA="${REPO_ROOT}/tsa/freetsa-cacert.pem"
-                _TSA_CERT="${REPO_ROOT}/tsa/freetsa-tsa.crt"
+                # 3. Try known TSA cert bundles (freetsa then DigiCert).
+                #    Absence of all cert bundles is a warning, not a failure.
+                _TSR_VERIFIED=false
 
-                if [[ ! -f "$_TSA_CA" || ! -f "$_TSA_CERT" ]]; then
-                    _warn "TIMESTAMP_UNANCHORED: TSA certs unavailable, timestamp not verified"
-                    TIMESTAMP_STATUS="unverifiable"
-                else
-                    # 4. Cryptographic verification against the anchor digest from the manifest.
+                # freetsa.org — needs -CAfile + -untrusted
+                _FT_CA="${REPO_ROOT}/tsa/freetsa-cacert.pem"
+                _FT_CERT="${REPO_ROOT}/tsa/freetsa-tsa.crt"
+                if [[ -f "$_FT_CA" && -f "$_FT_CERT" ]]; then
                     if openssl ts -verify \
-                            -digest "${_TS_DIGEST}" \
-                            -sha256 \
+                            -digest "${_TS_DIGEST}" -sha256 \
                             -in "${_TSR_FILE}" \
-                            -CAfile "${_TSA_CA}" \
-                            -untrusted "${_TSA_CERT}" \
+                            -CAfile "${_FT_CA}" -untrusted "${_FT_CERT}" \
                             > /dev/null 2>&1; then
-                        _ok "RFC 3161 timestamp verified"
-                        TIMESTAMP_STATUS="verified"
-                        TIMESTAMP_DATE="$(openssl ts -reply -in "${_TSR_FILE}" -text 2>/dev/null \
-                            | python3 -c "
+                        _TSR_VERIFIED=true
+                        _TSR_LABEL="freetsa.org"
+                    fi
+                fi
+
+                # DigiCert — chain embedded in TSR; only root anchor needed
+                if [[ "$_TSR_VERIFIED" == false ]]; then
+                    _DC_CA="${REPO_ROOT}/tsa/digicert-assured-root.pem"
+                    if [[ -f "$_DC_CA" ]]; then
+                        if openssl ts -verify \
+                                -digest "${_TS_DIGEST}" -sha256 \
+                                -in "${_TSR_FILE}" \
+                                -CAfile "${_DC_CA}" \
+                                > /dev/null 2>&1; then
+                            _TSR_VERIFIED=true
+                            _TSR_LABEL="DigiCert"
+                        fi
+                    fi
+                fi
+
+                # 4. Report result.
+                if [[ "$_TSR_VERIFIED" == true ]]; then
+                    _ok "RFC 3161 timestamp verified (${_TSR_LABEL})"
+                    TIMESTAMP_STATUS="verified"
+                    TIMESTAMP_DATE="$(openssl ts -reply -in "${_TSR_FILE}" -text 2>/dev/null \
+                        | python3 -c "
 import sys
 for line in sys.stdin:
     if 'Time stamp:' in line:
         print(line.split('Time stamp:')[1].strip())
         break
 " || true)"
-                        [[ -n "$TIMESTAMP_DATE" ]] && _ok "Timestamp date: ${TIMESTAMP_DATE}"
-                    else
-                        add_error "TIMESTAMP_INVALID: token does not verify against anchor digest"
-                        TIMESTAMP_STATUS="invalid"
-                    fi
+                    [[ -n "$TIMESTAMP_DATE" ]] && _ok "Timestamp date: ${TIMESTAMP_DATE}"
+                elif [[ ! -f "$_FT_CA" && ! -f "${REPO_ROOT}/tsa/digicert-assured-root.pem" ]]; then
+                    _warn "TIMESTAMP_UNANCHORED: no TSA certs available, timestamp not verified"
+                    TIMESTAMP_STATUS="unverifiable"
+                else
+                    add_error "TIMESTAMP_INVALID: token does not verify against anchor digest"
+                    TIMESTAMP_STATUS="invalid"
                 fi
             fi
         fi

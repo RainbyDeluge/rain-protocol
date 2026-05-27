@@ -31,9 +31,22 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-TSA_URL="https://freetsa.org/tsr"
-TSA_CA="${REPO_ROOT}/tsa/freetsa-cacert.pem"
-TSA_CERT="${REPO_ROOT}/tsa/freetsa-tsa.crt"
+# Default TSA: DigiCert (public, no rate limits). Override with RAIN_TSA_URL env var.
+# For freetsa: RAIN_TSA_URL=https://freetsa.org/tsr bash scripts/timestamp-bundle.sh <dir>
+TSA_URL="${RAIN_TSA_URL:-http://timestamp.digicert.com}"
+
+# Select TSA cert bundle based on URL
+if [[ "$TSA_URL" == *"freetsa"* ]]; then
+    TSA_CA="${REPO_ROOT}/tsa/freetsa-cacert.pem"
+    TSA_CERT="${REPO_ROOT}/tsa/freetsa-tsa.crt"
+    TSA_CERT_NAMES=("freetsa-cacert.pem" "freetsa-tsa.crt")
+    TSA_LABEL="freetsa.org"
+else
+    TSA_CA="${REPO_ROOT}/tsa/digicert-assured-root.pem"
+    TSA_CERT=""    # DigiCert embeds full chain in TSR; only root anchor needed
+    TSA_CERT_NAMES=("digicert-assured-root.pem")
+    TSA_LABEL="timestamp.digicert.com"
+fi
 
 # ── Argument ──────────────────────────────────────────────────────────────────
 
@@ -46,16 +59,17 @@ BUNDLE_DIR="$(cd "$1" && pwd)"
 
 # ── Pre-flight: TSA certificates ──────────────────────────────────────────────
 
-echo "[0/5] Checking TSA certificates..."
+echo "[0/5] Checking TSA certificates (TSA: ${TSA_LABEL})..."
 missing_tsa=false
-[[ ! -f "${TSA_CA}" ]]   && { printf '  missing: %s\n' "${TSA_CA}";   missing_tsa=true; }
-[[ ! -f "${TSA_CERT}" ]] && { printf '  missing: %s\n' "${TSA_CERT}"; missing_tsa=true; }
+[[ ! -f "${TSA_CA}" ]] && { printf '  missing: %s\n' "${TSA_CA}"; missing_tsa=true; }
+[[ -n "${TSA_CERT}" && ! -f "${TSA_CERT}" ]] && { printf '  missing: %s\n' "${TSA_CERT}"; missing_tsa=true; }
 if [[ "${missing_tsa}" == true ]]; then
     printf 'Error: TSA certificates not found. Run: bash scripts/get-tsa-cert.sh\n' >&2
     exit 1
 fi
-echo "  freetsa-cacert.pem : OK"
-echo "  freetsa-tsa.crt    : OK"
+for _cert_name in "${TSA_CERT_NAMES[@]}"; do
+    echo "  ${_cert_name} : OK"
+done
 
 # ── Step 1: Locate manifest ───────────────────────────────────────────────────
 
@@ -113,18 +127,19 @@ openssl ts -query \
     -out "${TSQ_FILE}"
 echo "  written: manifest.tsq"
 
-# ── Step 3: Send request to freetsa.org ──────────────────────────────────────
+# ── Step 3: Send request to TSA ──────────────────────────────────────────────
 
-echo "[3/5] Sending TSQ to freetsa.org..."
+echo "[3/5] Sending TSQ to ${TSA_LABEL}..."
 HTTP_STATUS="$(curl --silent --show-error \
     --write-out '%{http_code}' \
     --request POST "${TSA_URL}" \
     --header 'Content-Type: application/timestamp-query' \
+    --header 'User-Agent: RAIN/0.1' \
     --data-binary "@${TSQ_FILE}" \
     --output "${TSR_FILE}")"
 
 if [[ "${HTTP_STATUS}" != "200" ]]; then
-    printf 'Error: freetsa.org returned HTTP %s\n' "${HTTP_STATUS}" >&2
+    printf 'Error: %s returned HTTP %s\n' "${TSA_LABEL}" "${HTTP_STATUS}" >&2
     printf 'Check network connectivity and try again.\n' >&2
     rm -f "${TSQ_FILE}" "${TSR_FILE}"
     exit 1
@@ -142,13 +157,9 @@ rm -f "${TSQ_FILE}"
 # ── Step 4: Verify the token (using the same pre-modification digest) ─────────
 
 echo "[4/5] Verifying timestamp token..."
-if ! openssl ts -verify \
-        -digest "${MANIFEST_HASH}" \
-        -sha256 \
-        -in "${TSR_FILE}" \
-        -CAfile "${TSA_CA}" \
-        -untrusted "${TSA_CERT}" \
-        > /dev/null 2>&1; then
+_verify_cmd=(openssl ts -verify -digest "${MANIFEST_HASH}" -sha256 -in "${TSR_FILE}" -CAfile "${TSA_CA}")
+[[ -n "${TSA_CERT}" ]] && _verify_cmd+=(-untrusted "${TSA_CERT}")
+if ! "${_verify_cmd[@]}" > /dev/null 2>&1; then
     printf 'Error: timestamp token verification failed\n' >&2
     exit 1
 fi
@@ -201,8 +212,14 @@ printf '  manifest.json          — timestamp_anchor_sha256 embedded (SSOT for 
 printf '  bundle-index.json      — unchanged (no timestamp data)\n'
 printf '\nTo verify the timestamp later:\n'
 printf '  DIGEST=$(python3 -c "import json; print(json.load(open('"'"'manifest.json'"'"')).get('"'"'timestamp_anchor_sha256'"'"', '"'"''"'"'))")\n'
-printf '  openssl ts -verify -digest $DIGEST -sha256 \\\n'
-printf '    -in %s/manifest.tsr \\\n' "${BUNDLE_DIR}"
-printf '    -CAfile tsa/freetsa-cacert.pem -untrusted tsa/freetsa-tsa.crt\n'
+if [[ "$TSA_URL" == *"freetsa"* ]]; then
+    printf '  openssl ts -verify -digest $DIGEST -sha256 \\\n'
+    printf '    -in %s/manifest.tsr \\\n' "${BUNDLE_DIR}"
+    printf '    -CAfile tsa/freetsa-cacert.pem -untrusted tsa/freetsa-tsa.crt\n'
+else
+    printf '  openssl ts -verify -digest $DIGEST -sha256 \\\n'
+    printf '    -in %s/manifest.tsr \\\n' "${BUNDLE_DIR}"
+    printf '    -CAfile tsa/digicert-assured-root.pem\n'
+fi
 printf '\nNext step:\n'
 printf '  bash scripts/sign-bundle.sh %s\n' "$1"

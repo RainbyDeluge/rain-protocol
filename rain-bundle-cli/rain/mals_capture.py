@@ -337,15 +337,19 @@ def capture_session(
     schemas_dir: Path | None = None,
     skip_confirm: bool = False,
     stub_providers: set[str] | None = None,
+    attestation_mode: str = "post-session",
 ) -> dict:
     """
     Mène une session multi-fournisseur et produit un mals-log conforme au schéma.
 
-    provider_models : surcharges du modèle par fournisseur,
-                      ex. {"anthropic": "claude-sonnet-4-6"}.
-    stub_providers  : providers à remplacer par StubProvider honnête (provider="stub").
-                      Utile pour les tests hors-ligne ou les clés sans quota.
-                      Le log résultant reflètera "stub" — jamais un faux nom de provider.
+    provider_models   : surcharges du modèle par fournisseur,
+                        ex. {"anthropic": "claude-sonnet-4-6"}.
+    stub_providers    : providers à remplacer par StubProvider honnête (provider="stub").
+                        Utile pour les tests hors-ligne ou les clés sans quota.
+                        Le log résultant reflètera "stub" — jamais un faux nom de provider.
+    attestation_mode  : "post-session" (défaut) ou "session-signed".
+                        En mode "session-signed", chaque itération est signée Ed25519 et
+                        chaînée, avec ancrage TSA DigiCert non bloquant.
 
     Invariants de confidentialité :
       - Aucun prompt ni réponse n'est écrit dans le log.
@@ -422,6 +426,7 @@ def capture_session(
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     iterations:    list[dict] = []
+    raw_for_sign:  list[dict] = []   # used only in session-signed mode
     actual_models: dict[str, str] = {}
     token_use:     dict[str, list[int]] = {p: [0, 0] for p in needed}
 
@@ -442,28 +447,45 @@ def capture_session(
         i_hash = _sha256(prompt)
         o_hash = _sha256(text)
 
-        entry: dict = {
+        raw_iter: dict = {
             "seq":         seq,
             "action":      "generate",
             "input_hash":  i_hash,
             "output_hash": o_hash,
-            "ts":          ts,
         }
         if is_multi:
-            entry["provider"] = inst.provider_name  # "stub" si stubé, vrai nom sinon
-            entry["model"]    = actual_model
+            raw_iter["provider"] = inst.provider_name  # "stub" si stubé, vrai nom sinon
+            raw_iter["model"]    = actual_model
 
-        iterations.append(entry)
+        if attestation_mode == "post-session":
+            entry = {**raw_iter, "ts": ts}
+            iterations.append(entry)
+        else:
+            raw_for_sign.append(raw_iter)
+
         print(f"  input_hash  : {i_hash[:20]}…")
         print(f"  output_hash : {o_hash[:20]}…")
 
     ended_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    # -- Signature de chaîne (session-signed uniquement) ---------------------
+    if attestation_mode == "session-signed":
+        from rain.session_signer import build_signed_iterations
+        from rain.timestamp_provider import get_default_timestamp_provider
+        print("\n  [session-signed] Signature Ed25519 + ancrage TSA (DigiCert)…", flush=True)
+        iterations = build_signed_iterations(
+            raw_for_sign,
+            timestamp_provider=get_default_timestamp_provider(),
+        )
+        for it in iterations:
+            tsa = it.get("tsa_status", "pending")
+            print(f"  seq={it['seq']} tsa_status={tsa}", flush=True)
+
     # -- Construction du log -------------------------------------------------
     log: dict = {
         "session_id":        session_id,
         "source_class":      "native",
-        "attestation_class": "post-session",
+        "attestation_class": attestation_mode,
         "started_at":        started_at,
         "ended_at":          ended_at,
         "iterations":        iterations,

@@ -110,6 +110,18 @@ def main() -> None:
         ),
     )
     p.add_argument(
+        "--attestation",
+        choices=["post-session", "session-signed"],
+        default="post-session",
+        dest="attestation",
+        help=(
+            "Mode d'attestation du log. "
+            "'post-session' (défaut) : hash signé après la session. "
+            "'session-signed' : chaque itération est signée Ed25519 et chaînée "
+            "en temps réel, avec ancrage TSA DigiCert non bloquant."
+        ),
+    )
+    p.add_argument(
         "--yes", action="store_true",
         help="Sauter la confirmation de coût (mode non-interactif)",
     )
@@ -149,6 +161,7 @@ def main() -> None:
             print(f"  modèle {pname:<10}: {mdl}")
     if stub_providers:
         print(f"  stubs (no API)   : {', '.join(sorted(stub_providers))}")
+    print(f"  attestation      : {args.attestation}")
 
     try:
         capture_session(
@@ -161,6 +174,7 @@ def main() -> None:
             schemas_dir=REPO_ROOT / "schemas",
             skip_confirm=args.yes,
             stub_providers=stub_providers,
+            attestation_mode=args.attestation,
         )
     except (RuntimeError, ValueError) as exc:
         print(f"\nErreur : {exc}", file=sys.stderr)
