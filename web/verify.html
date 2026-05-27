@@ -247,6 +247,84 @@ input[type=file] { display: none; }
   padding: 1px 5px;
 }
 
+/* ── TIMELINE / FRISE ─────────────────────────────────────────────────── */
+.tl { margin-bottom: 36px; }
+.tl-hd {
+  font-size: 10px; letter-spacing: .18em; color: var(--tx0);
+  text-transform: uppercase;
+  padding-bottom: 8px; border-bottom: 1px solid var(--bdr);
+  margin-bottom: 28px;
+}
+.tl-track {
+  position: relative;
+  display: flex; align-items: flex-start;
+}
+.tl-track::before {
+  content: '';
+  position: absolute;
+  top: 13px; left: 0; right: 0; height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    rgba(233,30,140,.22) 12%,
+    rgba(255,184,0,.22) 38%,
+    rgba(0,229,255,.22) 62%,
+    rgba(0,255,136,.22) 88%,
+    transparent 100%
+  );
+}
+.tl-item {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; align-items: center;
+}
+.tl-node {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid currentColor; background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; position: relative; z-index: 1; flex-shrink: 0;
+  transition: box-shadow .2s;
+}
+.tl-node:hover { box-shadow: 0 0 10px currentColor; opacity: .85; }
+.tl-body {
+  display: flex; flex-direction: column; align-items: center;
+  max-width: 130px;
+}
+.tl-label {
+  font-size: 9px; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--tx0); text-align: center; margin-top: 9px; white-space: nowrap;
+}
+.tl-detail {
+  font-size: 11px; color: var(--tx0); text-align: center;
+  margin-top: 5px; line-height: 1.55; word-break: break-word;
+}
+/* per-milestone node colours */
+.tl-mg { color: var(--mg); }
+.tl-cy { color: var(--cy); }
+.tl-gd { color: var(--gd); }
+.tl-gr { color: var(--gr); }
+
+@media (max-width: 560px) {
+  .tl-track {
+    flex-direction: column; padding-left: 14px;
+  }
+  .tl-track::before {
+    top: 0; bottom: 0; left: 13px; right: auto;
+    width: 1px; height: auto;
+    background: linear-gradient(
+      to bottom,
+      rgba(233,30,140,.22),
+      rgba(0,229,255,.22)
+    );
+  }
+  .tl-item {
+    flex: none; flex-direction: row; align-items: flex-start;
+    gap: 14px; margin-bottom: 20px; width: 100%;
+  }
+  .tl-body { align-items: flex-start; max-width: 100%; }
+  .tl-label { text-align: left; margin-top: 4px; }
+  .tl-detail { text-align: left; }
+}
+
 footer {
   margin-top: 60px; padding-top: 16px;
   border-top: 1px solid var(--bdr);
@@ -801,8 +879,25 @@ async function verify(map, sourceName) {
   const sigInvalid = cryptoResult.sigStatus === 'invalid';
   const overallOk  = hashOk && !sigInvalid;
 
+  // Parse MALS log if present (hashes only — no plaintext stored in log)
+  let malsLog = null;
+  const malsEntry = (manifest.files || []).find(f => f.role === 'mals-log');
+  if (malsEntry && map[malsEntry.name]) {
+    try { malsLog = JSON.parse(new TextDecoder().decode(map[malsEntry.name])); } catch {}
+  }
+
+  // Detect TSA authority from TSR bytes (text scan for known issuer names)
+  let tsaAuthority = null;
+  if (map['manifest.tsr']) {
+    try {
+      const tsrText = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(map['manifest.tsr']));
+      if      (tsrText.includes('DigiCert')) tsaAuthority = 'DigiCert';
+      else if (tsrText.includes('FreeTSA'))  tsaAuthority = 'FreeTSA';
+    } catch {}
+  }
+
   setStatus('Vérification terminée.', '');
-  render({ sourceName, manifest, intent, results, hashOk, overallOk, cryptoResult });
+  render({ sourceName, manifest, intent, malsLog, tsaAuthority, results, hashOk, overallOk, cryptoResult });
 }
 
 // ── Renderer ──────────────────────────────────────────────────────────────────
@@ -812,7 +907,7 @@ function esc(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function render({ sourceName, manifest, intent, results, hashOk, overallOk, cryptoResult }) {
+function render({ sourceName, manifest, intent, malsLog, tsaAuthority, results, hashOk, overallOk, cryptoResult }) {
   const pl      = (manifest.proof_level || 'P1').toUpperCase();
   const plClass = pl === 'P2' ? 'p2' : 'p1';
   const vClass  = overallOk ? 'ok' : 'bad';
@@ -876,6 +971,8 @@ function render({ sourceName, manifest, intent, results, hashOk, overallOk, cryp
       '<div class="vd-sub">' + esc(vSub) + ' <span class="plv ' + plClass + '">' + pl + '</span></div>' +
     '</div>' +
 
+    (overallOk ? renderTimeline({ manifest, intent, malsLog, results, cryptoResult, tsaAuthority }) : '') +
+
     '<div class="sec">' +
       '<div class="sec-hd">Métadonnées</div>' +
       '<div class="mg-grid">' +
@@ -901,6 +998,98 @@ function render({ sourceName, manifest, intent, results, hashOk, overallOk, cryp
     renderCryptoSection(cryptoResult, pl);
 
   res.classList.add('on');
+}
+
+// ── Timeline / Frise ──────────────────────────────────────────────────────────
+
+function formatTsDate(s) {
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return s;
+  const months = ['jan.','fév.','mars','avr.','mai','juin','juil.','août','sep.','oct.','nov.','déc.'];
+  const day    = parseInt(m[3], 10);
+  const month  = months[parseInt(m[2], 10) - 1];
+  const year   = m[1];
+  const tm     = s.match(/(\d{2}:\d{2})/);
+  return day + ' ' + month + ' ' + year + (tm ? ' ' + tm[1] + ' UTC' : '');
+}
+
+function renderTimeline({ manifest, intent, malsLog, results, cryptoResult, tsaAuthority }) {
+  const milestones = [];
+
+  // 1. CRÉÉ — artwork + intent
+  const artEntry = results.find(r => r.role === 'artwork');
+  if (artEntry) {
+    const purposeRaw = intent && intent.purpose ? intent.purpose : '';
+    const purposeShort = purposeRaw.length > 65 ? purposeRaw.slice(0, 65).trim() + '…' : purposeRaw;
+    const humanRole = intent ? intent.human_role : null;
+    let detail = '<span style="color:var(--tx2)">' + esc(artEntry.name) + '</span>';
+    if (humanRole)    detail += '<br>' + esc(humanRole);
+    if (purposeShort) detail += '<br><em>' + esc(purposeShort) + '</em>';
+    milestones.push({ icon: '♥', cls: 'tl-mg', label: 'Créé', detail });
+  }
+
+  // 2. PROCESSUS — only if a MALS log is present
+  if (malsLog && Array.isArray(malsLog.iterations) && malsLog.iterations.length > 0) {
+    const iters = malsLog.iterations;
+    const count = iters.length;
+    let providers = [];
+    if (malsLog.provider === 'multi') {
+      providers = [...new Set(iters.map(it => it.provider).filter(Boolean))];
+    } else if (malsLog.provider) {
+      providers = [malsLog.provider];
+    }
+    const isSigned     = malsLog.attestation_class === 'session-signed';
+    const anchoredCnt  = isSigned ? iters.filter(it => it.tsa_status === 'anchored').length : 0;
+    let detail = '<span style="color:var(--tx2)">' + count + ' itération' + (count > 1 ? 's' : '') + '</span>';
+    if (providers.length) detail += '<br>' + esc(providers.join(', '));
+    if (isSigned) {
+      detail += '<br><span style="color:var(--cy)">chaîne signée</span>';
+      if (anchoredCnt > 0) detail += '<br>' + anchoredCnt + '/' + count + ' ancrées TSA';
+    }
+    milestones.push({ icon: '⊕', cls: 'tl-cy', label: 'Processus', detail });
+  }
+
+  // 3. SIGNÉ — only when Ed25519 is verified
+  if (cryptoResult && cryptoResult.sigStatus === 'verified') {
+    const fp = cryptoResult.fpActual ? cryptoResult.fpActual.slice(0, 8) + '…' : '';
+    let detail = '<span style="color:var(--gd)">Ed25519 ✓</span>';
+    if (fp) detail += '<br>' + esc(fp);
+    milestones.push({ icon: '◆', cls: 'tl-gd', label: 'Signé', detail });
+  }
+
+  // 4. HORODATÉ — only when TSR anchor matches
+  if (cryptoResult && cryptoResult.tsrMatchesAnchor === true && cryptoResult.tsrGenTime) {
+    const dateStr = formatTsDate(cryptoResult.tsrGenTime);
+    const auth    = tsaAuthority || 'RFC 3161';
+    let detail = '<span style="color:var(--cy)">' + esc(dateStr) + '</span><br>' + esc(auth);
+    milestones.push({ icon: '●', cls: 'tl-cy', label: 'Horodaté', detail });
+  }
+
+  // 5. INTÈGRE — only when all hashes pass
+  const okCount = results.filter(r => r.s256ok === true && r.s3ok === true).length;
+  if (okCount > 0 && !results.some(r => r.s256ok === false || r.s3ok === false)) {
+    let detail = '<span style="color:var(--gr)">' + okCount + ' fichier' + (okCount > 1 ? 's' : '') + '</span><br>SHA-256 + SHA3';
+    milestones.push({ icon: '≡', cls: 'tl-gr', label: 'Intègre', detail });
+  }
+
+  if (!milestones.length) return '';
+
+  const items = milestones.map(m =>
+    '<div class="tl-item">' +
+      '<div class="tl-node ' + m.cls + '">' + m.icon + '</div>' +
+      '<div class="tl-body">' +
+        '<div class="tl-label">' + esc(m.label) + '</div>' +
+        '<div class="tl-detail">' + m.detail + '</div>' +
+      '</div>' +
+    '</div>'
+  ).join('');
+
+  return (
+    '<div class="tl">' +
+      '<div class="tl-hd">Histoire du bundle</div>' +
+      '<div class="tl-track">' + items + '</div>' +
+    '</div>'
+  );
 }
 
 // ── Crypto section renderer ────────────────────────────────────────────────────
