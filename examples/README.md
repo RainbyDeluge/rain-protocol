@@ -12,6 +12,20 @@
 
 Palette Deluge : noir · magenta · or · cyan · blanc.
 
+### Vérification en une commande
+
+```bash
+bash scripts/verify.sh examples/deluge-genesis/
+```
+
+Résultat attendu après `git clone`, sans aucune dépendance locale :
+
+```
+RESULT: VALID [P2]
+```
+
+> **Note honnête** : La chaîne CA RAIN apparaît non ancrée (`CHAIN_UNVERIFIED`) — la CA de test est auto-signée et non distribuée (comportement v0 attendu). L'intégrité des fichiers, la signature Ed25519, l'horodatage DigiCert RFC 3161 et la chaîne de processus session-signed sont, eux, pleinement vérifiés sans aucune dépendance locale.
+
 ### Preuves cryptographiques incluses
 
 | Fichier | Rôle |
@@ -19,25 +33,11 @@ Palette Deluge : noir · magenta · or · cyan · blanc.
 | `manifest.json` | Manifeste signé Ed25519 (P2) |
 | `manifest.sig` | Signature détachée |
 | `manifest.tsr` | Jeton RFC 3161 DigiCert (27 mai 2026) |
-| `signer-cert.pem` | Certificat signataire RAIN |
-| `mals-4fbdfb85-*.json` | Log MALS session-signed — 2 itérations de conception, chaîne Ed25519, ancrage DigiCert |
+| `signer-cert.pem` | Certificat signataire RAIN (clé publique uniquement) |
+| `mals-4fbdfb85-*.json` | Log MALS session-signed — 2 itérations de conception OpenAI, chaîne Ed25519, ancrage DigiCert |
 | `emotion-ia.png` | Œuvre originale (gpt-image-1, 1536×1024) |
 
 Le log MALS capture la session de conception en `attestation_class: "session-signed"` : chaque itération est signée individuellement et chaînée, avec ancrage TSA DigiCert. Aucun prompt ni réponse n'est stocké — uniquement des hashes SHA-256.
-
-### Vérification en une commande
-
-```bash
-bash scripts/verify.sh examples/deluge-genesis/
-```
-
-Résultat attendu après `git clone` + `bash scripts/gen-ca.sh` :
-
-```
-RESULT: VALID [P2]
-```
-
-> **Note** : La vérification nécessite la PKI locale (`pki/ca-cert.pem`). Après un `git clone` frais, lancez `bash scripts/gen-ca.sh` pour initialiser la PKI, puis re-signez si vous souhaitez produire votre propre bundle. Pour vérifier uniquement le bundle existant, le certificat `signer-cert.pem` inclus suffit — seule la vérification de chaîne CA sera marquée DOWNGRADE si votre CA locale diffère.
 
 ### Image C2PA distribuable
 
