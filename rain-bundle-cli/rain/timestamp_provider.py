@@ -5,7 +5,8 @@ Mirrors the Provider/StubProvider pattern from mals_capture.py.
 Architecture:
   TimestampProvider (ABC)  ← interface commune
     FreeTSAProvider         ← implémentation freetsa.org
-    [futur : OpenTimestamps, DigiCert, BatchedProvider, ...]
+    DigiCertProvider        ← implémentation DigiCert timestamp.digicert.com
+    [futur : OpenTimestamps, BatchedProvider, ...]
 
 PRINCIPE NON BLOQUANT (PRINCIPE B) :
   timestamp() lève TimestampError en cas d'échec réseau ou TSA.
@@ -124,6 +125,97 @@ class FreeTSAProvider(TimestampProvider):
                         "curl", "--silent", "--show-error",
                         "--request", "POST", self._url,
                         "--header", "Content-Type: application/timestamp-query",
+                        "--data-binary", f"@{tsq_path}",
+                        "--output", tsr_path,
+                        "--max-time", str(self.timeout),
+                    ],
+                    capture_output=True,
+                    timeout=self.timeout + 5,
+                )
+                if curl_result.returncode != 0:
+                    raise TimestampError(
+                        f"curl a échoué vers {self._url} (code {curl_result.returncode}): "
+                        f"{curl_result.stderr.decode(errors='replace').strip()}"
+                    )
+
+                if not os.path.exists(tsr_path) or os.path.getsize(tsr_path) == 0:
+                    raise TimestampError(f"Réponse vide reçue de la TSA ({self._url})")
+
+                with open(tsr_path, "rb") as f:
+                    tsr_bytes = f.read()
+
+                return tsr_bytes
+
+        except TimestampError:
+            raise
+        except subprocess.TimeoutExpired as exc:
+            raise TimestampError(
+                f"Timeout ({self.timeout}s) lors de la construction de la TSQ"
+            ) from exc
+        except Exception as exc:
+            raise TimestampError(
+                f"Erreur inattendue lors de l'horodatage : {exc}"
+            ) from exc
+
+
+class DigiCertProvider(TimestampProvider):
+    """Horodatage RFC 3161 via timestamp.digicert.com (service public DigiCert).
+
+    Interface identique à FreeTSAProvider — même contrat, TSA différente.
+    Prouve que l'abstraction TimestampProvider est réellement pluggable.
+
+    Le token retourné peut être vérifié avec :
+      openssl ts -verify -digest <hex> -sha256 -in req.tsr
+                 -CAfile tsa/digicert-assured-root.pem
+                 -untrusted <chain extraite du token>
+
+    Args:
+        timeout: délai réseau en secondes (défaut 10).
+        url: URL TSA (défaut timestamp.digicert.com). Paramétrable pour les tests.
+    """
+
+    provider_name = "digicert"
+    _DEFAULT_URL = "http://timestamp.digicert.com"
+
+    def __init__(self, timeout: int = 10, url: str | None = None) -> None:
+        self.timeout = timeout
+        self._url = url or self._DEFAULT_URL
+
+    def timestamp(self, digest_hex: str) -> bytes:
+        """Obtient un jeton RFC 3161 de DigiCert pour digest_hex."""
+        if len(digest_hex) != 64 or not all(c in "0123456789abcdef" for c in digest_hex):
+            raise TimestampError(
+                f"digest_hex invalide : attendu 64 caractères hex minuscule, reçu {digest_hex!r}"
+            )
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tsq_path = os.path.join(tmpdir, "req.tsq")
+
+                result = subprocess.run(
+                    [
+                        "openssl", "ts", "-query",
+                        "-digest", digest_hex,
+                        "-sha256",
+                        "-cert",
+                        "-out", tsq_path,
+                    ],
+                    capture_output=True,
+                    timeout=self.timeout,
+                )
+                if result.returncode != 0:
+                    raise TimestampError(
+                        f"openssl ts -query a échoué (code {result.returncode}): "
+                        f"{result.stderr.decode(errors='replace').strip()}"
+                    )
+
+                tsr_path = os.path.join(tmpdir, "resp.tsr")
+
+                curl_result = subprocess.run(
+                    [
+                        "curl", "--silent", "--show-error",
+                        "--request", "POST", self._url,
+                        "--header", "Content-Type: application/timestamp-query",
+                        "--header", "User-Agent: RAIN/0.1",
                         "--data-binary", f"@{tsq_path}",
                         "--output", tsr_path,
                         "--max-time", str(self.timeout),
